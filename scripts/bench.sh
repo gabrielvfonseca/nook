@@ -28,13 +28,16 @@ if [ -z "${NOOK_ROOT:-}" ]; then
     exit 1
 fi
 
-# Verify NOOK_ROOT is on APFS
-if ! stat -f "$NOOK_ROOT" | grep -q "apfs"; then
-    echo "NOOK_ROOT ($NOOK_ROOT) is not on APFS. Benchmarks require APFS for clonefile."
+# Verify NOOK_ROOT is on APFS (macOS)
+# Find the mount point for NOOK_ROOT
+NOOK_MOUNT=$(df "$NOOK_ROOT" | tail -1 | awk '{print $NF}')
+if ! diskutil info "$NOOK_MOUNT" 2>/dev/null | grep -q "APFS"; then
+    echo "NOOK_ROOT ($NOOK_ROOT) is not on APFS (mount: $NOOK_MOUNT). Benchmarks require APFS for clonefile."
     exit 1
 fi
 
 # Verify SCRATCH is on same volume as NOOK_ROOT for clonefile to work
+# Use stat to get device ID (st_dev)
 if [ "$(stat -f "%d" "$NOOK_ROOT")" != "$(stat -f "%d" "$SCRATCH")" ]; then
     echo "SCRATCH ($SCRATCH) and NOOK_ROOT ($NOOK_ROOT) are on different volumes. clonefile will fail."
     exit 1
@@ -99,16 +102,19 @@ run_bench() {
     local name="$1"
     local cmd="$2"
     echo "--- $name ---"
-    local output
-    output=$(hyperfine --runs "$RUNS" --warmup 1 --style basic "$cmd" 2>&1 || true)
-    echo "$output"
-    # Extract median and p95 from hyperfine output
+    local json_file
+    json_file=$(mktemp)
+    hyperfine --runs "$RUNS" --warmup 1 --style basic --shell=default --export-json "$json_file" "$cmd" 2>&1
+    cat "$json_file"
+    # Extract median and p95 from hyperfine JSON output
     local median
-    median=$(echo "$output" | grep -E "Median:" | sed -E 's/.*Median: *([0-9.]+)s.*/\1/')
+    median=$(jq -r '.results[0].summary.time_wall_clock.median // "N/A"' "$json_file")
     local p95
-    p95=$(echo "$output" | grep -E "P95:" | sed -E 's/.*P95: *([0-9.]+)s.*/\1/')
-    echo "MEDIAN: ${median:-N/A}s  P95: ${p95:-N/A}s"
+    # Calculate P95 from measurements
+    p95=$(jq -r '[.results[0].measurements[].time_wall_clock.value] | sort | .[length * 0.95 | floor]' "$json_file") || p95="N/A"
+    echo "MEDIAN: ${median}s  P95: ${p95}s"
     echo ""
+    rm -f "$json_file"
 }
 
 # Benchmark 1: git clone + setup (baseline)
@@ -120,7 +126,7 @@ fi
 # Benchmark 2: git worktree + setup
 if [ -n "$REPO_URL" ] && [ -d "$SRC/.git" ]; then
     run_bench "git worktree + setup" \
-        "cd '$SCRATCH' && rm -rf worktree && git -C '$SRC' worktree add '$SCRATCH/worktree' && cd '$SCRATCH/worktree' && $SETUP_CMD"
+        "git -C '$SRC' worktree remove -f '$SCRATCH/worktree' 2>/dev/null || true; git -C '$SRC' worktree prune 2>/dev/null || true; git -C '$SRC' worktree add '$SCRATCH/worktree' && cd '$SCRATCH/worktree' && $SETUP_CMD"
 fi
 
 # Benchmark 3: cp -c (clonefile copy)

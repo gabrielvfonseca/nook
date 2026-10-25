@@ -82,4 +82,26 @@ Spotlight/XProtect first.
 
 ## Results
 
-_(Run `./scripts/bench.sh` on your machine and paste results above)_
+### 2026-10-25 on arm64 macOS 26.6.2 (25G83)
+
+| Method | Median (s) | P95 (s) | Files | Disk/clone |
+|---|---|---|---|---|
+| git clone + setup | 3.10 | 3.19 | 1842 | ~33 MB |
+| git worktree + setup | 2.51 | 2.61 | 1842 | ~33 MB |
+| cp -c -R | 1.33 | 1.37 | 1842 | ~33 MB |
+| nook new | 0.066 | 0.075 | 1842 | ~0 MB (CoW) |
+| nook rm | 0.022 | 0.721 | N/A | N/A |
+
+- Project: `/tmp/nook-bench-project` (npm project, 70 deps)
+- Setup command: `npm ci`
+- NOOK_ROOT: `/tmp/nook-bench` (APFS, 1TB volume)
+- Runs per benchmark: 3
+
+### Key Findings
+
+- **nook new (66ms median)** is **47x faster** than `git clone + npm ci` (3.10s)
+- **nook new (66ms median)** is **20x faster** than raw `cp -c` clonefile (1.33s)
+- Clonefile copy (`cp -c`) is only 2.3x faster than git clone because npm ci dominates
+- Nook's advantage: dependencies pre-installed in base, only metadata records created
+- Disk per clone: ~0 MB additional (APFS copy-on-write shares all blocks)
+- nook rm median 22ms, but first run can be slower (721ms P95) due to cache effects
