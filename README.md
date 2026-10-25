@@ -10,13 +10,31 @@ checking out, copying, or installing. It also keeps clones from filling your dis
 
 File creation and deletion are the slowest things macOS does. Agent workloads
 create tens of thousands of small files per run (checkout, `node_modules`, build
-output). Nook avoids creating them at all.
+output). A clone still writes a metadata record per file but copies no file data
+blocks—APFS copy-on-write shares blocks until a file is modified.
+
+## How this compares to git worktree
+
+| Aspect | git worktree | Nook |
+|---|---|---|
+| Setup speed | Must run `npm ci` / `cargo build` per worktree | Dependencies pre-installed in base |
+| Disk usage | Full copy of worktree + deps | CoW shares base blocks; only deltas use space |
+| Isolation | Full isolation | Full isolation (CoW) |
+| Disk bounds | None (can fill disk) | TTL + LRU + optional byte cap |
+| Temp cleanup | Manual | Automatic per-workspace TMPDIR |
+| Base updates | Not applicable | Atomic rebuild, old clones unaffected |
+
+Nook's advantage: dependencies are already installed and disk use stays bounded.
 
 ## What it does NOT do
 
 - It does not speed up reads/writes inside a running agent.
 - It does not fix Spotlight, XProtect, or Docker bind-mount overhead.
 - It does not work across volumes (clone source and target must be on one APFS volume).
+
+## Known limitations
+
+- **Path-dependent build output**: Some tools hardcode absolute paths (Python venvs, node_modules/.bin scripts, Cargo fingerprints, TypeScript .tsbuildinfo). These break when cloned. Run `nook base check` to detect them, and use `--post-clone` hooks or recreate after cloning. See [base check docs](docs/CLI.md#nook-base-check).
 
 ## Quick start
 
