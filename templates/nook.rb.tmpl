@@ -1,0 +1,62 @@
+class Nook < Formula
+  desc "Fast APFS clonefile workspace manager for agent workloads"
+  homepage "https://github.com/{{GITHUB_REPO}}"
+  version "{{VERSION}}"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/{{GITHUB_REPO}}/releases/download/v{{VERSION}}/nook-aarch64-apple-darwin.tar.gz"
+      sha256 "{{SHA256_ARM}}"
+    else
+      url "https://github.com/{{GITHUB_REPO}}/releases/download/v{{VERSION}}/nook-x86_64-apple-darwin.tar.gz"
+      sha256 "{{SHA256_INTEL}}"
+    end
+  end
+
+  def install
+    bin.install "nook"
+    # Install launchd plist for scheduled GC
+    (buildpath/"dev.nook.gc.plist").write <<~EOS
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>Label</key>
+        <string>dev.nook.gc</string>
+        <key>ProgramArguments</key>
+        <array>
+          <string>{{HOMEBREW_PREFIX}}/bin/nook</string>
+          <string>gc</string>
+        </array>
+        <key>StartInterval</key>
+        <integer>600</integer>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>EnvironmentVariables</key>
+        <dict>
+          <key>NOOK_ROOT</key>
+          <string>{{NOOK_ROOT}}</string>
+        </dict>
+      </dict>
+      </plist>
+    EOS
+    (prefix/"dev.nook.gc.plist").install "dev.nook.gc.plist"
+  end
+
+  def caveats
+    <<~EOS
+      Set NOOK_ROOT to your APFS volume:
+        export NOOK_ROOT=/Volumes/Work/nook
+      
+      To enable automatic GC (every 10 min):
+        mkdir -p ~/Library/LaunchAgents
+        cp #{prefix}/dev.nook.gc.plist ~/Library/LaunchAgents/
+        launchctl load ~/Library/LaunchAgents/dev.nook.gc.plist
+    EOS
+  end
+
+  test do
+    system "#{bin}/nook", "--version"
+  end
+end

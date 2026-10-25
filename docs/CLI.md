@@ -35,5 +35,68 @@ Expire by TTL, then evict LRU if volume above high-water.
 ## nook stats
 Volume total/free/used %, workspace count, oldest/newest. Uses `statvfs`.
 
+## nook setup [--homebrew] [--force] [--dry-run] [--config <path>]
+Detect coding agents on the machine, generate agent-specific configuration with nook usage instructions, set up skills integration, and optionally generate a local Homebrew formula.
+
+### Options
+- `--homebrew` - Also generate a local Homebrew formula at `~/homebrew/nook.rb`
+- `--force` - Force re-generation even if configs exist (backs up existing files)
+- `--dry-run` - Only detect agents and show what would be written, don't write files
+- `--config <path>` - Path to custom agents config (TOML), default: `~/.config/nook/agents.toml`
+
+### Supported Agents (built-in)
+| Agent | Config Files | Skills |
+|-------|-------------|--------|
+| Claude Code | `~/.claude/CLAUDE.md` (append) | `~/.claude/skills/nook/` |
+| Cursor | `.cursorrules` (overwrite) | `.cursor/skills/nook/` |
+| GitHub Copilot | `~/Library/Application Support/Code/User/copilot-instructions.md` (append) | N/A |
+| Zed | `~/.config/zed/settings.json` (merge) | N/A |
+| Aider | `~/.aider.conf.yml` (append) | N/A |
+
+### Custom Agents
+Add custom agents in `~/.config/nook/agents.toml`:
+```toml
+[[custom_agents]]
+name = "my-agent"
+detect_paths = ["~/.my-agent", "~/.config/my-agent"]
+config_files = [
+  { target = "~/.my-agent/AGENTS.md", template = "my-agent.md", append = true }
+]
+skill_registration = { enabled = true, skill_dir = "~/.my-agent/skills", install_script = "skills.sh" }
+```
+
+### Skills Integration
+For agents with skill support (Claude Code, Cursor), `nook setup` creates:
+- `~/.claude/skills/nook/skill.toml` - Skill metadata
+- `~/.claude/skills/nook/instructions.md` - Usage instructions
+- `~/.claude/skills/skills.sh` - Installer script
+
+Run `skills.sh` to verify installation or re-install skills.
+
+### Homebrew Formula
+With `--homebrew`, generates `~/homebrew/nook.rb` for local installation:
+```bash
+brew install ~/homebrew/nook.rb
+```
+The formula includes a launchd plist for automatic GC (every 10 minutes).
+
+### Examples
+```bash
+# Detect agents, generate configs, install skills
+nook setup
+
+# Also generate Homebrew formula
+nook setup --homebrew
+
+# Preview what would happen
+nook setup --dry-run
+
+# Force regenerate (backs up existing configs)
+nook setup --force
+
+# Use custom agents config
+nook setup --config ./my-agents.toml
+```
+
 ## Exit codes
 0 ok, 1 generic error, 2 base missing/stale-and-strict, 3 cross-volume, 4 disk full.

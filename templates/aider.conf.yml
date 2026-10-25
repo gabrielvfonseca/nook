@@ -1,0 +1,42 @@
+# Nook Integration for Aider
+
+## Overview
+Nook provides fast, isolated workspaces using macOS APFS clonefile technology.
+
+## When to Use Nook
+- Clean project state for each coding task
+- Parallel Aider sessions
+- Fast workspace creation (< 100ms)
+- Disk efficiency via copy-on-write
+
+## Quick Start
+```bash
+cd $(nook new --ttl 2h)
+aider
+```
+
+## Key Commands
+- `nook new [--ttl 2h] [--name label]` - Create workspace
+- `nook env <id>` - Environment exports
+- `nook list` - List workspaces
+- `nook gc` - Cleanup
+- `nook stats` - Disk usage
+
+## Configuration
+```bash
+export NOOK_ROOT=/Volumes/Work/nook
+```
+
+## Workflow
+1. `nook base build --repo <url> --setup "make deps"` (once)
+2. `cd $(nook new)` - Ready to code
+3. Auto-cleanup via TTL/GC
+
+## Tips
+- Shared caches in `$NOOK_ROOT/cache`
+- `nook touch <id>` prevents eviction
+- `--require-fresh` ensures base currency
+
+## More Info
+- `nook --help`
+- https://github.com/gabrielfonseca/nook

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use nook::{base_check, clone, gc, lockfile, store, util, volume};
+use nook::{base_check, clone, gc, lockfile, setup, store, util, volume};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -56,6 +56,21 @@ enum Cmd {
     },
     /// Show real volume usage
     Stats,
+    /// Detect coding agents, generate configs, set up skills, and optionally install via Homebrew
+    Setup {
+        /// Also generate and install a local Homebrew formula
+        #[arg(long)]
+        homebrew: bool,
+        /// Force re-generation even if configs exist
+        #[arg(long)]
+        force: bool,
+        /// Only detect agents, don't write files
+        #[arg(long)]
+        dry_run: bool,
+        /// Path to custom agents config (TOML)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -236,6 +251,14 @@ fn run() -> Result<()> {
             BaseCmd::Refresh => refresh_base(&r, &db)?,
             BaseCmd::Status => status_base(&r, &db)?,
         },
+        Cmd::Setup {
+            homebrew,
+            force,
+            dry_run,
+            config,
+        } => {
+            setup::run_setup(&r, homebrew, force, dry_run, config.as_deref())?;
+        }
     }
     Ok(())
 }

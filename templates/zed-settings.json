@@ -1,0 +1,17 @@
+{
+  "nook": {
+    "description": "APFS clonefile workspace manager for agent workloads",
+    "commands": {
+      "new": "nook new [--ttl 2h] [--name label]",
+      "env": "nook env <id>",
+      "list": "nook list",
+      "gc": "nook gc",
+      "stats": "nook stats"
+    },
+    "env": {
+      "NOOK_ROOT": "/Volumes/Work/nook"
+    },
+    "workflow": "cd $(nook new) && zed .",
+    "more_info": "https://github.com/gabrielfonseca/nook"
+  }
+}

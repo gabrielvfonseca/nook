@@ -1,0 +1,5 @@
+name = "nook"
+version = "0.1.0"
+description = "APFS clonefile workspace manager for agent workloads"
+author = "nook contributors"
+agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]

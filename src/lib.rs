@@ -6,6 +6,7 @@ pub mod base_check;
 pub mod clone;
 pub mod gc;
 pub mod lockfile;
+pub mod setup;
 pub mod store;
 pub mod util;
 pub mod volume;
