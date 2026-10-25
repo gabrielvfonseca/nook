@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use nook::{base_check, clone, gc, lockfile, store, util};
+use nook::{base_check, clone, gc, lockfile, store, util, volume};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -97,10 +97,29 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let r = root();
+
+    // Verify NOOK_ROOT is on APFS
+    volume::verify_apfs(&r)?;
+
     let ws_root = r.join("ws");
     std::fs::create_dir_all(&ws_root)?;
     std::fs::create_dir_all(r.join("cache"))?;
     let db = store::open(&r.join("nook.db"))?;
+
+    // For commands that need base, verify base and ws_root are on same volume
+    let needs_base = matches!(
+        cli.cmd,
+        Cmd::New { .. }
+            | Cmd::Base {
+                cmd: BaseCmd::Build { .. } | BaseCmd::Check | BaseCmd::Refresh | BaseCmd::Status
+            }
+    );
+    if needs_base {
+        let base = r.join("base");
+        if base.exists() {
+            volume::verify_same_volume(&base, &ws_root)?;
+        }
+    }
 
     match cli.cmd {
         Cmd::New {
@@ -142,6 +161,19 @@ fn run() -> Result<()> {
                                 eprintln!("  current lockfile hash: {}", lh);
                             }
                         }
+                    }
+                }
+            }
+            // Check NOOK_MAX_BYTES cap if set
+            if let Ok(max_bytes_str) = std::env::var("NOOK_MAX_BYTES") {
+                if let Ok(max_bytes) = max_bytes_str.parse::<u64>() {
+                    let used = volume::volume_used_bytes(&r)?;
+                    if used >= max_bytes {
+                        bail!(
+                            "disk cap reached: {:.1} GB used of {:.1} GB limit (set NOOK_MAX_BYTES or run gc)",
+                            used as f64 / 1e9,
+                            max_bytes as f64 / 1e9
+                        );
                     }
                 }
             }
@@ -195,7 +227,7 @@ fn run() -> Result<()> {
         }
         Cmd::Gc { dry_run, high, low } => run_gc(&db, &r, &ws_root, dry_run, high, low)?,
         Cmd::Stats => {
-            println!("volume used: {:.1}%", gc::volume_used_pct(&r)?);
+            println!("volume used: {:.1}%", volume::volume_used_pct(&r)?);
             println!("workspaces: {}", store::list(&db, "active")?.len());
         }
         Cmd::Base { cmd } => match cmd {
@@ -216,6 +248,17 @@ fn run_gc(
     high: f64,
     low: f64,
 ) -> Result<()> {
+    // Check NOOK_MAX_BYTES cap if set - use as effective high-water mark
+    let max_bytes = std::env::var("NOOK_MAX_BYTES")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+    let effective_high = if let Some(max) = max_bytes {
+        let total = volume::volume_total_bytes(r)?;
+        (max as f64 / total as f64 * 100.0).min(high)
+    } else {
+        high
+    };
+
     // Retry anything left in `deleting` by a crash.
     for w in store::list(db, "deleting")? {
         if !dry_run {
@@ -229,7 +272,7 @@ fn run_gc(
         .iter()
         .filter(|w| w.created_at + w.ttl_secs < now)
         .collect();
-    let over_high = gc::volume_used_pct(r)? > high;
+    let over_high = volume::volume_used_pct(r)? > effective_high;
     if over_high {
         // list() is ordered least-recently-used first; skip anything touched in the last 10 min.
         for w in &active {
@@ -253,7 +296,7 @@ fn run_gc(
         // Always finish TTL victims; stop LRU victims once below the low-water mark.
         if ttl_count > 0 {
             ttl_count -= 1;
-        } else if gc::volume_used_pct(r)? < low {
+        } else if volume::volume_used_pct(r)? < low {
             break;
         }
     }

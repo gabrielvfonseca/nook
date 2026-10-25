@@ -8,3 +8,4 @@ pub mod gc;
 pub mod lockfile;
 pub mod store;
 pub mod util;
+pub mod volume;

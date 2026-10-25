@@ -21,9 +21,14 @@ output). Nook avoids creating them at all.
 ## Quick start
 
 ```sh
-# one-time: dedicated quota'd APFS volume (see docs/DISK_SAFETY.md)
-diskutil apfs addVolume disk3 APFS Work -quota 100g
+# Option 1: dedicated quota'd APFS volume (recommended; see docs/DISK_SAFETY.md)
+diskutil apfs list                          # find your APFS container
+diskutil apfs addVolume <container> APFS Work -quota 100g
 export NOOK_ROOT=/Volumes/Work/nook
+
+# Option 2: any APFS volume with size cap (e.g., main disk)
+export NOOK_ROOT=$HOME/nook
+export NOOK_MAX_BYTES=50000000000  # 50 GB cap
 
 nook base build --repo https://github.com/you/proj.git --setup "npm ci"
 nook new --ttl 2h        # prints workspace path
@@ -40,8 +45,8 @@ cargo build --release          # needs Rust (rustup) on macOS
 make check                     # fmt + clippy + tests
 PREFIX=$HOME/.local make install
 INSTALL_LAUNCHD=1 NOOK_ROOT=/Volumes/Work/nook make install   # + gc every 10 min
-./scripts/setup-volume.sh disk3 100g Work                        # quota'd volume
-./scripts/bench.sh /path/to/your/project                         # measure FIRST
+./scripts/setup-volume.sh <container> 100g Work                # quota'd volume (find container with `diskutil apfs list`)
+./scripts/bench.sh /path/to/your/project                       # measure FIRST
 ```
 
 ## Docs

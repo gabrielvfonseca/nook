@@ -28,22 +28,10 @@ fn par_remove(p: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn volume_used_pct(path: &Path) -> Result<f64> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let c = CString::new(path.as_os_str().as_bytes())?;
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        bail!("statvfs failed: {}", std::io::Error::last_os_error());
-    }
-    let total = s.f_blocks as f64;
-    let avail = s.f_bavail as f64;
-    Ok(100.0 * (1.0 - avail / total))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::volume;
     use std::os::unix::fs::symlink;
 
     #[test]
@@ -91,7 +79,7 @@ mod tests {
 
     #[test]
     fn used_pct_in_range() {
-        let p = volume_used_pct(Path::new("/")).unwrap();
+        let p = volume::volume_used_pct(Path::new("/")).unwrap();
         assert!((0.0..=100.0).contains(&p));
     }
 }
