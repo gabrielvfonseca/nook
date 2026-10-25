@@ -111,6 +111,15 @@ mod tests {
         let used = volume_used_bytes(d.path()).unwrap();
         assert!(total > 0);
         assert!(avail > 0);
-        assert_eq!(used, total.saturating_sub(avail));
+        // Allow small difference due to concurrent FS activity between calls
+        let expected_used = total.saturating_sub(avail);
+        let diff = (used as i128 - expected_used as i128).unsigned_abs() as u64;
+        assert!(
+            diff < 1_000_000,
+            "used={} expected={} diff={}",
+            used,
+            expected_used,
+            diff
+        );
     }
 }
