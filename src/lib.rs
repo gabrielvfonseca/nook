@@ -2,6 +2,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("nook targets macOS (APFS clonefile) only");
 
+pub mod base_check;
 pub mod clone;
 pub mod gc;
 pub mod store;

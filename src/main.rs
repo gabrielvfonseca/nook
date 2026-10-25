@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use nook::{clone, gc, store, util};
+use nook::{base_check, clone, gc, store, util};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -28,6 +28,9 @@ enum Cmd {
         ttl: String,
         #[arg(long)]
         name: Option<String>,
+        /// Run a command in the new workspace after cloning (for project-specific fixups)
+        #[arg(long)]
+        post_clone: Option<String>,
     },
     /// Print export lines for a workspace
     Env { id: String },
@@ -61,6 +64,8 @@ enum BaseCmd {
         #[arg(long)]
         setup: String,
     },
+    /// Scan the golden tree for absolute paths that will break when cloned
+    Check,
     Status,
 }
 
@@ -92,7 +97,11 @@ fn run() -> Result<()> {
     let db = store::open(&r.join("nook.db"))?;
 
     match cli.cmd {
-        Cmd::New { ttl, name } => {
+        Cmd::New {
+            ttl,
+            name,
+            post_clone,
+        } => {
             let ttl = util::parse_ttl(&ttl)?;
             let base = r.join("base");
             if !base.exists() {
@@ -103,6 +112,18 @@ fn run() -> Result<()> {
             clone::clone_tree(&base, &dst)?;
             std::fs::create_dir_all(dst.join(".nook/tmp"))?;
             store::insert(&db, &id, name.as_deref(), &dst.to_string_lossy(), ttl)?;
+            if let Some(cmd) = post_clone {
+                eprintln!("Running post-clone hook: {}", cmd);
+                if !Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .current_dir(&dst)
+                    .status()?
+                    .success()
+                {
+                    bail!("post-clone hook failed");
+                }
+            }
             println!("{}", dst.display()); // stdout is the path only
         }
         Cmd::Env { id } => {
@@ -134,6 +155,7 @@ fn run() -> Result<()> {
         }
         Cmd::Base { cmd } => match cmd {
             BaseCmd::Build { repo, setup } => build_base(&r, &repo, &setup)?,
+            BaseCmd::Check => check_base(&r)?,
             BaseCmd::Status => println!("base exists: {}", r.join("base").exists()),
         },
     }
@@ -226,5 +248,42 @@ fn build_base(r: &Path, repo: &str, setup: &str) -> Result<()> {
         std::fs::remove_dir_all(&old)?;
     }
     eprintln!("base built");
+    // Run check on the new base
+    base_check::check_base(&base)?.into_iter().for_each(|f| {
+        eprintln!(
+            "  [{}] {}: {}",
+            format!("{:?}", f.kind)
+                .to_lowercase()
+                .replace("findingkind::", ""),
+            f.path.strip_prefix(&base).unwrap_or(&f.path).display(),
+            f.detail
+        );
+        eprintln!("    -> suggestion: {}", f.kind.suggestion());
+    });
+    Ok(())
+}
+
+fn check_base(r: &Path) -> Result<()> {
+    let base = r.join("base");
+    if !base.exists() {
+        bail!("no base; run `nook base build` first");
+    }
+    let findings = base_check::check_base(&base)?;
+    if findings.is_empty() {
+        eprintln!("base check: no path-dependent content found");
+        return Ok(());
+    }
+    eprintln!("base check: found {} issue(s)", findings.len());
+    for f in findings {
+        eprintln!(
+            "  [{}] {}: {}",
+            format!("{:?}", f.kind)
+                .to_lowercase()
+                .replace("findingkind::", ""),
+            f.path.strip_prefix(&base).unwrap_or(&f.path).display(),
+            f.detail
+        );
+        eprintln!("    -> suggestion: {}", f.kind.suggestion());
+    }
     Ok(())
 }
