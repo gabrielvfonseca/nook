@@ -4,10 +4,19 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
-pub struct Ws { pub id: String, pub path: String, pub last_used: i64, pub created_at: i64, pub ttl_secs: i64 }
+pub struct Ws {
+    pub id: String,
+    pub path: String,
+    pub last_used: i64,
+    pub created_at: i64,
+    pub ttl_secs: i64,
+}
 
 pub fn open(db: &Path) -> Result<Connection> {
     let c = Connection::open(db)?;
@@ -33,13 +42,24 @@ pub fn insert(c: &Connection, id: &str, name: Option<&str>, path: &str, ttl: i64
 
 pub fn list(c: &Connection, state: &str) -> Result<Vec<Ws>> {
     let mut st = c.prepare("SELECT id,path,last_used,created_at,ttl_secs FROM workspaces WHERE state=?1 ORDER BY last_used ASC")?;
-    let rows = st.query_map([state], |r| Ok(Ws { id: r.get(0)?, path: r.get(1)?, last_used: r.get(2)?, created_at: r.get(3)?, ttl_secs: r.get(4)? }))?;
+    let rows = st.query_map([state], |r| {
+        Ok(Ws {
+            id: r.get(0)?,
+            path: r.get(1)?,
+            last_used: r.get(2)?,
+            created_at: r.get(3)?,
+            ttl_secs: r.get(4)?,
+        })
+    })?;
     let out: Vec<Ws> = rows.filter_map(|r| r.ok()).collect();
     Ok(out)
 }
 
 pub fn set_state(c: &Connection, id: &str, state: &str) -> Result<()> {
-    c.execute("UPDATE workspaces SET state=?2 WHERE id=?1", params![id, state])?;
+    c.execute(
+        "UPDATE workspaces SET state=?2 WHERE id=?1",
+        params![id, state],
+    )?;
     Ok(())
 }
 pub fn delete(c: &Connection, id: &str) -> Result<()> {
@@ -47,6 +67,9 @@ pub fn delete(c: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 pub fn touch(c: &Connection, id: &str) -> Result<()> {
-    c.execute("UPDATE workspaces SET last_used=?2 WHERE id=?1", params![id, now()])?;
+    c.execute(
+        "UPDATE workspaces SET last_used=?2 WHERE id=?1",
+        params![id, now()],
+    )?;
     Ok(())
 }

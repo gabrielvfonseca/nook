@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "nook", version, about = "Fast because it refuses to do the work.")]
+#[command(
+    name = "nook",
+    version,
+    about = "Fast because it refuses to do the work."
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -153,7 +157,10 @@ fn run_gc(
     }
     let now = store::now();
     let active = store::list(db, "active")?;
-    let mut victims: Vec<&store::Ws> = active.iter().filter(|w| w.created_at + w.ttl_secs < now).collect();
+    let mut victims: Vec<&store::Ws> = active
+        .iter()
+        .filter(|w| w.created_at + w.ttl_secs < now)
+        .collect();
     let over_high = gc::volume_used_pct(r)? > high;
     if over_high {
         // list() is ordered least-recently-used first; skip anything touched in the last 10 min.
@@ -163,7 +170,10 @@ fn run_gc(
             }
         }
     }
-    let mut ttl_count = active.iter().filter(|w| w.created_at + w.ttl_secs < now).count();
+    let mut ttl_count = active
+        .iter()
+        .filter(|w| w.created_at + w.ttl_secs < now)
+        .count();
     for w in victims {
         eprintln!("evict {}", w.id);
         if dry_run {
@@ -191,10 +201,21 @@ fn build_base(r: &Path, repo: &str, setup: &str) -> Result<()> {
             std::fs::remove_dir_all(p)?;
         }
     }
-    if !Command::new("git").args(["clone", "--", repo]).arg(&new).status()?.success() {
+    if !Command::new("git")
+        .args(["clone", "--", repo])
+        .arg(&new)
+        .status()?
+        .success()
+    {
         bail!("git clone failed");
     }
-    if !Command::new("sh").arg("-c").arg(setup).current_dir(&new).status()?.success() {
+    if !Command::new("sh")
+        .arg("-c")
+        .arg(setup)
+        .current_dir(&new)
+        .status()?
+        .success()
+    {
         bail!("setup command failed");
     }
     if base.exists() {

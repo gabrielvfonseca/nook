@@ -28,7 +28,9 @@ pub fn new_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let mix = t ^ ((std::process::id() as u128) << 24) ^ ((CTR.fetch_add(1, Ordering::Relaxed) as u128) << 48);
+    let mix = t
+        ^ ((std::process::id() as u128) << 24)
+        ^ ((CTR.fetch_add(1, Ordering::Relaxed) as u128) << 48);
     format!("{:08x}", (mix & 0xffff_ffff) as u32)
 }
 

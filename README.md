@@ -59,5 +59,5 @@ INSTALL_LAUNCHD=1 NOOK_ROOT=/Volumes/Work/nook make install   # + gc every 10 mi
 
 ## Status
 
-Repo scaffold complete (CI, tests, packaging). The code has NOT been compiled or run by its author; run `cargo test` first. No benchmarks exist. Do not trust any speedup claim
+Code compiles and `make check` passes (fmt, clippy, tests) on macOS. GitHub Actions CI runs on macOS runners. No benchmarks have been run yet; do not trust any speedup claim
 until `docs/BENCHMARKS.md` has been run on your machine.
