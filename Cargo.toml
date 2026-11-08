@@ -24,7 +24,7 @@ dirs = "5"
 rayon = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 libc = "0.2"
-sha2 = "0.10"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 
