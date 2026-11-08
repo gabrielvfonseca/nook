@@ -1,6 +1,6 @@
 # Data Model
 
-SQLite, WAL mode, file `$NOOK_ROOT/nook.db`.
+SQLite, WAL mode, file `$REPLICA_ROOT/replica.db`.
 
 ```sql
 CREATE TABLE workspaces (

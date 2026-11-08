@@ -1,5 +1,5 @@
 [package]
-name = "nook"
+name = "replica"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
@@ -10,11 +10,11 @@ keywords = ["apfs", "clonefile", "macos", "agents", "workspace"]
 categories = ["command-line-utilities", "filesystem"]
 
 [lib]
-name = "nook"
+name = "replica"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nook"
+name = "replica"
 path = "src/main.rs"
 
 [dependencies]

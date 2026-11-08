@@ -15,6 +15,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}" }
       - run: cargo build --release --target ${{ matrix.target }}
-      - run: tar -C target/${{ matrix.target }}/release -czf nook-${{ matrix.target }}.tar.gz nook
+      - run: tar -C target/${{ matrix.target }}/release -czf replica-${{ matrix.target }}.tar.gz replica
       - uses: softprops/action-gh-release@v2
-        with: { files: "nook-${{ matrix.target }}.tar.gz" }
+        with: { files: "replica-${{ matrix.target }}.tar.gz" }

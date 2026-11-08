@@ -138,7 +138,7 @@ pub fn load_custom_agents(config_path: Option<&Path>) -> Result<Vec<AgentConfig>
     let config_path = config_path.map(PathBuf::from).unwrap_or_else(|| {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("nook/agents.toml")
+            .join("replica/agents.toml")
     });
 
     if !config_path.exists() {
@@ -201,7 +201,7 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 
 pub fn generate_agent_config(
     agent: &DetectedAgent,
-    nook_root: &Path,
+    replica_root: &Path,
     force: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -215,7 +215,7 @@ pub fn generate_agent_config(
             }
         }
 
-        let template_content = get_template(&config_file.template, nook_root)?;
+        let template_content = get_template(&config_file.template, replica_root)?;
 
         if target_path.exists() && !force && !config_file.append && !dry_run {
             let backup = target_path.with_extension(format!(
@@ -261,7 +261,7 @@ pub fn generate_agent_config(
 
 pub fn install_skills(
     agent: &DetectedAgent,
-    nook_root: &Path,
+    replica_root: &Path,
     _force: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -271,21 +271,22 @@ pub fn install_skills(
     }
 
     let skill_dir = expand_tilde(&skill_registration.skill_dir);
-    let nook_skill_dir = skill_dir.join("nook");
+    let replica_skill_dir = skill_dir.join("replica");
 
     if !dry_run {
-        fs::create_dir_all(&nook_skill_dir)
-            .with_context(|| format!("creating skill directory: {}", nook_skill_dir.display()))?;
+        fs::create_dir_all(&replica_skill_dir).with_context(|| {
+            format!("creating skill directory: {}", replica_skill_dir.display())
+        })?;
     }
 
-    let skill_toml_content = r#"name = "nook"
+    let skill_toml_content = r#"name = "replica"
 version = "0.1.0"
 description = "APFS clonefile workspace manager for agent workloads"
-author = "nook contributors"
+author = "replica contributors"
 agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
 "#;
 
-    let skill_toml_path = nook_skill_dir.join("skill.toml");
+    let skill_toml_path = replica_skill_dir.join("skill.toml");
     if dry_run {
         println!("  would write skill.toml: {}", skill_toml_path.display());
     } else {
@@ -294,8 +295,8 @@ agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
         println!("  wrote skill.toml: {}", skill_toml_path.display());
     }
 
-    let instructions_content = generate_instructions(&agent.config.name, nook_root);
-    let instructions_path = nook_skill_dir.join("instructions.md");
+    let instructions_content = generate_instructions(&agent.config.name, replica_root);
+    let instructions_path = replica_skill_dir.join("instructions.md");
     if dry_run {
         println!(
             "  would write instructions.md: {}",
@@ -307,7 +308,7 @@ agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
         println!("  wrote instructions.md: {}", instructions_path.display());
     }
 
-    let skills_sh_content = generate_skills_sh(nook_root);
+    let skills_sh_content = generate_skills_sh(replica_root);
     let skills_sh_path = skill_dir.join(&skill_registration.install_script);
     if dry_run {
         println!("  would write skills.sh: {}", skills_sh_path.display());
@@ -327,7 +328,7 @@ agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
     Ok(())
 }
 
-fn get_template(template_name: &str, nook_root: &Path) -> Result<String> {
+fn get_template(template_name: &str, replica_root: &Path) -> Result<String> {
     let template = match template_name {
         "claude.md" => include_str!("../templates/claude.md"),
         "cursorrules" => include_str!("../templates/cursorrules"),
@@ -335,7 +336,7 @@ fn get_template(template_name: &str, nook_root: &Path) -> Result<String> {
         "zed-settings.json" => include_str!("../templates/zed-settings.json"),
         "aider.conf.yml" => include_str!("../templates/aider.conf.yml"),
         _ => {
-            let template_path = nook_root.join("templates").join(template_name);
+            let template_path = replica_root.join("templates").join(template_name);
             if template_path.exists() {
                 return fs::read_to_string(&template_path)
                     .with_context(|| format!("reading template: {}", template_path.display()));
@@ -346,72 +347,72 @@ fn get_template(template_name: &str, nook_root: &Path) -> Result<String> {
     Ok(template.to_string())
 }
 
-pub fn generate_instructions(agent_name: &str, nook_root: &Path) -> String {
+pub fn generate_instructions(agent_name: &str, replica_root: &Path) -> String {
     format!(
-        r#"# Nook Skill for {}
+        r#"# Replica Skill for {}
 
-## When to use nook
+## When to use replica
 - Starting a new coding task that needs an isolated workspace
 - Running multiple agent sessions in parallel
 - When you need fast workspace creation (< 100ms)
 
 ## Commands
-- `nook new [--ttl 2h]` - Create workspace, prints path
-- `nook env <id>` - Get export lines for workspace
-- `nook list` - List active workspaces
-- `nook gc` - Clean up expired workspaces
-- `nook stats` - Show disk usage
+- `replica new [--ttl 2h]` - Create workspace, prints path
+- `replica env <id>` - Get export lines for workspace
+- `replica list` - List active workspaces
+- `replica gc` - Clean up expired workspaces
+- `replica stats` - Show disk usage
 
 ## Integration
-Add to your workflow: `cd $(nook new) && <your-agent> .`
+Add to your workflow: `cd $(replica new) && <your-agent> .`
 
 ## Configuration
-NOOK_ROOT: {}
+REPLICA_ROOT: {}
 "#,
         agent_name,
-        nook_root.display()
+        replica_root.display()
     )
 }
 
-pub fn generate_skills_sh(nook_root: &Path) -> String {
+pub fn generate_skills_sh(replica_root: &Path) -> String {
     format!(
         r#"#!/usr/bin/env bash
-# Nook skills installer for {{AGENT}}
-# This script is generated by `nook setup`
+# Replica skills installer for {{AGENT}}
+# This script is generated by `replica setup`
 
 set -euo pipefail
 
-NOOK_ROOT="${{NOOK_ROOT:-{}}}"
+REPLICA_ROOT="${{REPLICA_ROOT:-{}}}"
 SKILLS_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 
-echo "Installing nook skills for {{AGENT}}..."
-echo "  NOOK_ROOT: $NOOK_ROOT"
+echo "Installing replica skills for {{AGENT}}..."
+echo "  REPLICA_ROOT: $REPLICA_ROOT"
 echo "  Skills dir: $SKILLS_DIR"
 
-# Verify nook is available
-if ! command -v nook &> /dev/null; then
-    echo "Warning: nook not found in PATH. Make sure it's installed."
-    echo "  Run: cargo install --path $NOOK_ROOT"
+# Verify replica is available
+if ! command -v replica &> /dev/null; then
+    echo "Warning: replica not found in PATH. Make sure it's installed."
+    echo "  Run: cargo install --path $REPLICA_ROOT"
     exit 1
 fi
 
-echo "Nook version: $(nook --version)"
+echo "Replica version: $(replica --version)"
 echo "Skills installed successfully!"
 "#,
-        nook_root.display()
+        replica_root.display()
     )
 }
 
-pub fn generate_homebrew_formula(nook_root: &Path, version: &str, dry_run: bool) -> Result<()> {
-    let formula_template = include_str!("../templates/nook.rb.tmpl");
+pub fn generate_homebrew_formula(replica_root: &Path, version: &str, dry_run: bool) -> Result<()> {
+    let formula_template = include_str!("../templates/replica.rb.tmpl");
 
     let formula = formula_template
         .replace("{{VERSION}}", version)
-        .replace("{{GITHUB_REPO}}", "gabrielfonseca/nook")
+        .replace("{{GITHUB_REPO}}", "gabrielfonseca/replica")
         .replace("{{SHA256_ARM}}", "REPLACE_WITH_ACTUAL_SHA256_ARM")
         .replace("{{SHA256_INTEL}}", "REPLACE_WITH_ACTUAL_SHA256_INTEL")
         .replace("{{HOMEBREW_PREFIX}}", "/usr/local")
-        .replace("{{NOOK_ROOT}}", &nook_root.display().to_string());
+        .replace("{{REPLICA_ROOT}}", &replica_root.display().to_string());
 
     let formula_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
@@ -422,7 +423,7 @@ pub fn generate_homebrew_formula(nook_root: &Path, version: &str, dry_run: bool)
             .with_context(|| format!("creating homebrew directory: {}", formula_dir.display()))?;
     }
 
-    let formula_path = formula_dir.join("nook.rb");
+    let formula_path = formula_dir.join("replica.rb");
     if dry_run {
         println!("  would write formula: {}", formula_path.display());
     } else {
@@ -436,15 +437,15 @@ pub fn generate_homebrew_formula(nook_root: &Path, version: &str, dry_run: bool)
 }
 
 pub fn run_setup(
-    nook_root: &Path,
+    replica_root: &Path,
     homebrew: bool,
     force: bool,
     dry_run: bool,
     custom_config: Option<&Path>,
 ) -> Result<()> {
-    println!("Nook Setup");
+    println!("Replica Setup");
     println!("==========");
-    println!("NOOK_ROOT: {}", nook_root.display());
+    println!("REPLICA_ROOT: {}", replica_root.display());
     println!();
 
     let agents = detect_agents(custom_config)?;
@@ -452,7 +453,7 @@ pub fn run_setup(
     if agents.is_empty() {
         println!("No coding agents detected.");
         println!("Supported agents: claude, cursor, copilot, zed, aider");
-        println!("Add custom agents in ~/.config/nook/agents.toml");
+        println!("Add custom agents in ~/.config/replica/agents.toml");
         return Ok(());
     }
 
@@ -473,15 +474,15 @@ pub fn run_setup(
 
     for agent in &agents {
         println!("Configuring {}...", agent.config.name);
-        generate_agent_config(agent, nook_root, force, dry_run)?;
-        install_skills(agent, nook_root, force, dry_run)?;
+        generate_agent_config(agent, replica_root, force, dry_run)?;
+        install_skills(agent, replica_root, force, dry_run)?;
         println!();
     }
 
     if homebrew {
         println!("Generating Homebrew formula...");
         let version = env!("CARGO_PKG_VERSION");
-        generate_homebrew_formula(nook_root, version, dry_run)?;
+        generate_homebrew_formula(replica_root, version, dry_run)?;
         println!();
     }
 
@@ -523,9 +524,9 @@ mod tests {
 
     #[test]
     fn test_generate_instructions() {
-        let nook_root = PathBuf::from("/test/nook");
-        let instructions = generate_instructions("claude", &nook_root);
-        assert!(instructions.contains("nook new"));
-        assert!(instructions.contains("/test/nook"));
+        let replica_root = PathBuf::from("/test/replica");
+        let instructions = generate_instructions("claude", &replica_root);
+        assert!(instructions.contains("replica new"));
+        assert!(instructions.contains("/test/replica"));
     }
 }

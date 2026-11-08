@@ -4,7 +4,7 @@
 Run BENCHMARKS.md baselines. Go/no-go.
 
 ## Phase 1 - Clone core
-`nook new`, `rm`, `list`, SQLite store, same-volume check.
+`replica new`, `rm`, `list`, SQLite store, same-volume check.
 
 ## Phase 2 - Safety
 `gc` (TTL + LRU), parallel delete, `stats`, `env`, orphan recovery.

@@ -2,7 +2,7 @@
 
 ```
             +-----------+
- agent ---> |  nook CLI | ---- optional ----> nook daemon (Phase 3)
+ agent ---> |  replica CLI | ---- optional ----> replica daemon (Phase 3)
             +-----+-----+                      (scheduled gc, batched fs ops)
                   |
    +--------------+----------------+
@@ -18,13 +18,13 @@
 
 ## Layout (all on ONE APFS volume)
 ```
-$NOOK_ROOT/
+$REPLICA_ROOT/
   base/            golden tree (repo + deps + warm build)
   base.new/        staging during rebuild
   ws/<id>/         one clone per run
-    .nook/tmp/     TMPDIR for that run
+    .replica/tmp/     TMPDIR for that run
   cache/           shared: cargo, pnpm/npm, sccache (NOT cloned)
-  nook.db          metadata
+  replica.db          metadata
 ```
 
 ## Components

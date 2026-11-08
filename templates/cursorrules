@@ -1,9 +1,9 @@
-# Nook Integration for Cursor
+# Replica Integration for Cursor
 
 ## Overview
-Nook provides fast, isolated workspaces for AI-assisted coding using APFS clonefile technology on macOS.
+Replica provides fast, isolated workspaces for AI-assisted coding using APFS clonefile technology on macOS.
 
-## When to Use Nook
+## When to Use Replica
 - Starting a new coding task requiring a clean project state
 - Running multiple Cursor sessions in parallel
 - Need workspace creation in < 100ms (vs seconds for git clone)
@@ -12,35 +12,35 @@ Nook provides fast, isolated workspaces for AI-assisted coding using APFS clonef
 ## Quick Start
 ```bash
 # Create workspace and open in Cursor
-cursor $(nook new --ttl 2h --name "my-task")
+cursor $(replica new --ttl 2h --name "my-task")
 
 # Or from within Cursor terminal:
-cd $(nook new --ttl 2h)
+cd $(replica new --ttl 2h)
 ```
 
 ## Key Commands
-- `nook new [--ttl 2h] [--name label]` - Create workspace
-- `nook env <id>` - Get environment exports
-- `nook list` - List workspaces
-- `nook gc` - Clean up expired workspaces
-- `nook stats` - Disk usage stats
+- `replica new [--ttl 2h] [--name label]` - Create workspace
+- `replica env <id>` - Get environment exports
+- `replica list` - List workspaces
+- `replica gc` - Clean up expired workspaces
+- `replica stats` - Disk usage stats
 
 ## Configuration
 ```bash
-export NOOK_ROOT=/Volumes/Work/nook
+export REPLICA_ROOT=/Volumes/Work/replica
 ```
 
 ## Workflow
-1. `nook base build --repo <url> --setup "make deps"` (one-time)
-2. `cd $(nook new)` - Instant workspace with deps ready
+1. `replica base build --repo <url> --setup "make deps"` (one-time)
+2. `cd $(replica new)` - Instant workspace with deps ready
 3. Code with Cursor
-4. Workspace auto-expires or `nook rm <id>`
+4. Workspace auto-expires or `replica rm <id>`
 
 ## Tips
-- Shared caches in `$NOOK_ROOT/cache` (cargo, npm, sccache)
-- Call `nook touch <id>` from long sessions
+- Shared caches in `$REPLICA_ROOT/cache` (cargo, npm, sccache)
+- Call `replica touch <id>` from long sessions
 - Use `--require-fresh` to ensure base is up-to-date
 
 ## More Info
-- `nook --help`
-- https://github.com/gabrielfonseca/nook
+- `replica --help`
+- https://github.com/gabrielfonseca/replica

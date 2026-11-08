@@ -1,4 +1,4 @@
-# Nook Spec
+# Replica Spec
 
 ## Problem
 Agent runs need an isolated project tree. Today: `git clone`/checkout + dependency
@@ -23,8 +23,8 @@ cleanup is slow, and leftover build output and temp files fill the disk.
 ## Requirements
 | ID | Requirement |
 |---|---|
-| R1 | `nook new` clones base to `$NOOK_ROOT/ws/<id>` using `clonefile(2)`; errors if not same APFS volume. |
-| R2 | Sets per-workspace `TMPDIR`, `NOOK_WS`, cache env vars via `nook env <id>`. |
+| R1 | `replica new` clones base to `$REPLICA_ROOT/ws/<id>` using `clonefile(2)`; errors if not same APFS volume. |
+| R2 | Sets per-workspace `TMPDIR`, `REPLICA_WS`, cache env vars via `replica env <id>`. |
 | R3 | Metadata persisted in SQLite; crash-safe (WAL). |
 | R4 | `gc` deletes expired workspaces, then evicts LRU until volume usage < low-water mark. |
 | R5 | Deletion is parallel and symlink-safe. |
@@ -34,7 +34,7 @@ cleanup is slow, and leftover build output and temp files fill the disk.
 
 ## Success criteria
 Measured on the user's machine (see BENCHMARKS.md): clone is >= 5-10x faster than the
-current setup path. If not, the bottleneck is elsewhere and Nook should not be adopted.
+current setup path. If not, the bottleneck is elsewhere and Replica should not be adopted.
 
 ## Risks
 - Clone time still scales with file count.

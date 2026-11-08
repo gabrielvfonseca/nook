@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Comprehensive benchmark: compare git clone+install, git worktree+install, cp -c, and nook new
+# Comprehensive benchmark: compare git clone+install, git worktree+install, cp -c, and replica new
 # Usage: bench.sh /path/to/project [scratch-dir] [runs=5]
 # scratch-dir MUST be on the same APFS volume as the project for clonefile to work.
-# Requires: hyperfine, python3, nook binary in PATH, NOOK_ROOT set to an APFS volume.
+# Requires: hyperfine, python3, replica binary in PATH, REPLICA_ROOT set to an APFS volume.
 set -euo pipefail
 
 SRC="${1:?usage: bench.sh /path/to/project [scratch-dir] [runs=5]}"
-SCRATCH="${2:-$(dirname "$SRC")/.nook-bench}"
+SCRATCH="${2:-$(dirname "$SRC")/.replica-bench}"
 RUNS="${3:-5}"
 mkdir -p "$SCRATCH"
 
@@ -16,38 +16,38 @@ if ! command -v hyperfine >/dev/null 2>&1; then
     exit 1
 fi
 
-# Check for nook
-if ! command -v nook >/dev/null 2>&1; then
-    echo "nook not found in PATH. Build with: cargo build --release"
+# Check for replica
+if ! command -v replica >/dev/null 2>&1; then
+    echo "replica not found in PATH. Build with: cargo build --release"
     exit 1
 fi
 
-# Check NOOK_ROOT
-if [ -z "${NOOK_ROOT:-}" ]; then
-    echo "NOOK_ROOT not set. Export it to an APFS volume."
+# Check REPLICA_ROOT
+if [ -z "${REPLICA_ROOT:-}" ]; then
+    echo "REPLICA_ROOT not set. Export it to an APFS volume."
     exit 1
 fi
 
-# Verify NOOK_ROOT is on APFS (macOS)
-# Find the mount point for NOOK_ROOT
-NOOK_MOUNT=$(df "$NOOK_ROOT" | tail -1 | awk '{print $NF}')
-if ! diskutil info "$NOOK_MOUNT" 2>/dev/null | grep -q "APFS"; then
-    echo "NOOK_ROOT ($NOOK_ROOT) is not on APFS (mount: $NOOK_MOUNT). Benchmarks require APFS for clonefile."
+# Verify REPLICA_ROOT is on APFS (macOS)
+# Find the mount point for REPLICA_ROOT
+REPLICA_MOUNT=$(df "$REPLICA_ROOT" | tail -1 | awk '{print $NF}')
+if ! diskutil info "$REPLICA_MOUNT" 2>/dev/null | grep -q "APFS"; then
+    echo "REPLICA_ROOT ($REPLICA_ROOT) is not on APFS (mount: $REPLICA_MOUNT). Benchmarks require APFS for clonefile."
     exit 1
 fi
 
-# Verify SCRATCH is on same volume as NOOK_ROOT for clonefile to work
+# Verify SCRATCH is on same volume as REPLICA_ROOT for clonefile to work
 # Use stat to get device ID (st_dev)
-if [ "$(stat -f "%d" "$NOOK_ROOT")" != "$(stat -f "%d" "$SCRATCH")" ]; then
-    echo "SCRATCH ($SCRATCH) and NOOK_ROOT ($NOOK_ROOT) are on different volumes. clonefile will fail."
+if [ "$(stat -f "%d" "$REPLICA_ROOT")" != "$(stat -f "%d" "$SCRATCH")" ]; then
+    echo "SCRATCH ($SCRATCH) and REPLICA_ROOT ($REPLICA_ROOT) are on different volumes. clonefile will fail."
     exit 1
 fi
 
-echo "=== Nook Benchmark ==="
+echo "=== Replica Benchmark ==="
 echo "Project: $SRC"
 echo "Scratch: $SCRATCH"
 echo "Runs per benchmark: $RUNS"
-echo "NOOK_ROOT: $NOOK_ROOT"
+echo "REPLICA_ROOT: $REPLICA_ROOT"
 echo "Machine: $(uname -m) $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
 echo "Files in project: $(find "$SRC" -type f 2>/dev/null | wc -l | tr -d ' ')"
 echo "Project size (du): $(du -sh "$SRC" | cut -f1)"
@@ -87,11 +87,11 @@ else
 fi
 echo ""
 
-# Build nook base if needed
-echo "=== Building nook base ==="
-if [ ! -d "$NOOK_ROOT/base" ]; then
+# Build replica base if needed
+echo "=== Building replica base ==="
+if [ ! -d "$REPLICA_ROOT/base" ]; then
     echo "Building base tree..."
-    nook base build --repo "$SRC" --setup "$SETUP_CMD"
+    replica base build --repo "$SRC" --setup "$SETUP_CMD"
 else
     echo "Base already exists, using existing base."
 fi
@@ -133,20 +133,20 @@ fi
 run_bench "cp -c (clonefile)" \
     "rm -rf '$SCRATCH/cp-clone' && cp -c -R '$SRC' '$SCRATCH/cp-clone'"
 
-# Benchmark 4: nook new
-run_bench "nook new" \
-    "nook new --ttl 1m"
+# Benchmark 4: replica new
+run_bench "replica new" \
+    "replica new --ttl 1m"
 
-# Benchmark 5: nook rm (cleanup)
-run_bench "nook rm" \
-    "nook gc --dry-run >/dev/null && nook list | head -5 | cut -f1 | xargs -r nook rm"
+# Benchmark 5: replica rm (cleanup)
+run_bench "replica rm" \
+    "replica gc --dry-run >/dev/null && replica list | head -5 | cut -f1 | xargs -r replica rm"
 
 echo "=== Disk Usage Summary ==="
-echo "Volume total: $(df -h "$NOOK_ROOT" | tail -1 | awk '{print $2}')"
-echo "Volume used:  $(df -h "$NOOK_ROOT" | tail -1 | awk '{print $3}')"
-echo "Volume free:  $(df -h "$NOOK_ROOT" | tail -1 | awk '{print $4}')"
-echo "nook stats:"
-nook stats
+echo "Volume total: $(df -h "$REPLICA_ROOT" | tail -1 | awk '{print $2}')"
+echo "Volume used:  $(df -h "$REPLICA_ROOT" | tail -1 | awk '{print $3}')"
+echo "Volume free:  $(df -h "$REPLICA_ROOT" | tail -1 | awk '{print $4}')"
+echo "replica stats:"
+replica stats
 
 echo ""
 echo "=== Results Template for docs/BENCHMARKS.md ==="
@@ -159,12 +159,12 @@ cat <<EOF
 | git clone + setup | | | $(find "$SRC" -type f 2>/dev/null | wc -l | tr -d ' ') | |
 | git worktree + setup | | | | |
 | cp -c -R | | | | |
-| nook new | | | | |
-| nook rm | | | | |
+| replica new | | | | |
+| replica rm | | | | |
 
 - Project: \`$SRC\`
 - Setup command: \`$SETUP_CMD\`
-- NOOK_ROOT: \`$NOOK_ROOT\`
+- REPLICA_ROOT: \`$REPLICA_ROOT\`
 - Runs per benchmark: $RUNS
 
 EOF

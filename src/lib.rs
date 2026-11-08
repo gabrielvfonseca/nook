@@ -1,6 +1,6 @@
-//! Nook: fast because it refuses to do the work.
+//! Replica: fast because it refuses to do the work.
 #[cfg(not(target_os = "macos"))]
-compile_error!("nook targets macOS (APFS clonefile) only");
+compile_error!("replica targets macOS (APFS clonefile) only");
 
 pub mod base_check;
 pub mod clone;

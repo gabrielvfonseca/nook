@@ -1,17 +1,17 @@
 {
-  "nook": {
+  "replica": {
     "description": "APFS clonefile workspace manager for agent workloads",
     "commands": {
-      "new": "nook new [--ttl 2h] [--name label]",
-      "env": "nook env <id>",
-      "list": "nook list",
-      "gc": "nook gc",
-      "stats": "nook stats"
+      "new": "replica new [--ttl 2h] [--name label]",
+      "env": "replica env <id>",
+      "list": "replica list",
+      "gc": "replica gc",
+      "stats": "replica stats"
     },
     "env": {
-      "NOOK_ROOT": "/Volumes/Work/nook"
+      "REPLICA_ROOT": "/Volumes/Work/replica"
     },
-    "workflow": "cd $(nook new) && zed .",
-    "more_info": "https://github.com/gabrielfonseca/nook"
+    "workflow": "cd $(replica new) && zed .",
+    "more_info": "https://github.com/gabrielfonseca/replica"
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create a quota'd APFS volume for Nook. Usage: setup-volume.sh [container-disk] [quota] [name]
+# Create a quota'd APFS volume for Replica. Usage: setup-volume.sh [container-disk] [quota] [name]
 set -euo pipefail
 CONTAINER="${1:-}"
 QUOTA="${2:-100g}"
@@ -10,6 +10,6 @@ if [[ -z "$CONTAINER" ]]; then
   exit 1
 fi
 diskutil apfs addVolume "$CONTAINER" APFS "$NAME" -quota "$QUOTA"
-mkdir -p "/Volumes/$NAME/nook"
+mkdir -p "/Volumes/$NAME/replica"
 touch "/Volumes/$NAME/.metadata_never_index"
-echo "Volume ready: /Volumes/$NAME  (export NOOK_ROOT=/Volumes/$NAME/nook)"
+echo "Volume ready: /Volumes/$NAME  (export REPLICA_ROOT=/Volumes/$NAME/replica)"

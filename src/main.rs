@@ -1,12 +1,12 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use nook::{base_check, clone, gc, lockfile, setup, store, util, volume};
+use replica::{base_check, clone, gc, lockfile, setup, store, util, volume};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser)]
 #[command(
-    name = "nook",
+    name = "replica",
     version,
     about = "Fast because it refuses to do the work."
 )]
@@ -91,12 +91,12 @@ enum BaseCmd {
 }
 
 fn root() -> PathBuf {
-    PathBuf::from(std::env::var("NOOK_ROOT").unwrap_or_else(|_| "/Volumes/Work/nook".into()))
+    PathBuf::from(std::env::var("REPLICA_ROOT").unwrap_or_else(|_| "/Volumes/Work/replica".into()))
 }
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("nook: {e:#}");
+        eprintln!("replica: {e:#}");
         let msg = format!("{e:#}");
         let code = if msg.contains("different volumes") {
             3
@@ -113,13 +113,13 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     let r = root();
 
-    // Verify NOOK_ROOT is on APFS
+    // Verify REPLICA_ROOT is on APFS
     volume::verify_apfs(&r)?;
 
     let ws_root = r.join("ws");
     std::fs::create_dir_all(&ws_root)?;
     std::fs::create_dir_all(r.join("cache"))?;
-    let db = store::open(&r.join("nook.db"))?;
+    let db = store::open(&r.join("replica.db"))?;
 
     // For commands that need base, verify base and ws_root are on same volume
     let needs_base = matches!(
@@ -146,7 +146,7 @@ fn run() -> Result<()> {
             let ttl = util::parse_ttl(&ttl)?;
             let base = r.join("base");
             if !base.exists() {
-                bail!("no base; run `nook base build` first");
+                bail!("no base; run `replica base build` first");
             }
             // Check if base is stale
             let base_info = store::get_base_info(&db)?;
@@ -161,9 +161,9 @@ fn run() -> Result<()> {
                         let msg = if head_changed && lockfile_changed {
                             "base is stale: git HEAD and lockfiles have changed"
                         } else if head_changed {
-                            "base is stale: git HEAD has changed (run `nook base refresh`)"
+                            "base is stale: git HEAD has changed (run `replica base refresh`)"
                         } else {
-                            "base is stale: lockfiles have changed (run `nook base refresh`)"
+                            "base is stale: lockfiles have changed (run `replica base refresh`)"
                         };
                         if require_fresh {
                             bail!("{}", msg);
@@ -179,13 +179,13 @@ fn run() -> Result<()> {
                     }
                 }
             }
-            // Check NOOK_MAX_BYTES cap if set
-            if let Ok(max_bytes_str) = std::env::var("NOOK_MAX_BYTES") {
+            // Check REPLICA_MAX_BYTES cap if set
+            if let Ok(max_bytes_str) = std::env::var("REPLICA_MAX_BYTES") {
                 if let Ok(max_bytes) = max_bytes_str.parse::<u64>() {
                     let used = volume::volume_used_bytes(&r)?;
                     if used >= max_bytes {
                         bail!(
-                            "disk cap reached: {:.1} GB used of {:.1} GB limit (set NOOK_MAX_BYTES or run gc)",
+                            "disk cap reached: {:.1} GB used of {:.1} GB limit (set REPLICA_MAX_BYTES or run gc)",
                             used as f64 / 1e9,
                             max_bytes as f64 / 1e9
                         );
@@ -195,7 +195,7 @@ fn run() -> Result<()> {
             let id = util::new_id();
             let dst = ws_root.join(&id);
             clone::clone_tree(&base, &dst)?;
-            std::fs::create_dir_all(dst.join(".nook/tmp"))?;
+            std::fs::create_dir_all(dst.join(".replica/tmp"))?;
             store::insert(
                 &db,
                 &id,
@@ -220,8 +220,8 @@ fn run() -> Result<()> {
         }
         Cmd::Env { id } => {
             let p = ws_root.join(&id);
-            println!("export NOOK_WS={}", p.display());
-            println!("export TMPDIR={}/.nook/tmp", p.display());
+            println!("export REPLICA_WS={}", p.display());
+            println!("export TMPDIR={}/.replica/tmp", p.display());
             println!("export CARGO_HOME={}/cache/cargo", r.display());
             println!("export npm_config_cache={}/cache/npm", r.display());
             println!("export SCCACHE_DIR={}/cache/sccache", r.display());
@@ -271,8 +271,8 @@ fn run_gc(
     high: f64,
     low: f64,
 ) -> Result<()> {
-    // Check NOOK_MAX_BYTES cap if set - use as effective high-water mark
-    let max_bytes = std::env::var("NOOK_MAX_BYTES")
+    // Check REPLICA_MAX_BYTES cap if set - use as effective high-water mark
+    let max_bytes = std::env::var("REPLICA_MAX_BYTES")
         .ok()
         .and_then(|s| s.parse::<u64>().ok());
     let effective_high = if let Some(max) = max_bytes {
@@ -365,7 +365,7 @@ fn build_base(r: &Path, repo: &str, setup: &str) -> Result<()> {
         std::fs::remove_dir_all(&old)?;
     }
     // Store base info
-    let db = store::open(&r.join("nook.db"))?;
+    let db = store::open(&r.join("replica.db"))?;
     store::set_base_info(&db, built_at, head.clone(), lockfile_hash.clone())?;
 
     eprintln!("base built");
@@ -393,7 +393,7 @@ fn build_base(r: &Path, repo: &str, setup: &str) -> Result<()> {
 fn refresh_base(r: &Path, db: &rusqlite::Connection) -> Result<()> {
     let base = r.join("base");
     if !base.exists() {
-        bail!("no base; run `nook base build` first");
+        bail!("no base; run `replica base build` first");
     }
     // Get current base info to find the repo URL
     let base_info = store::get_base_info(db)?;
@@ -469,7 +469,7 @@ fn status_base(r: &Path, db: &rusqlite::Connection) -> Result<()> {
 fn check_base(r: &Path) -> Result<()> {
     let base = r.join("base");
     if !base.exists() {
-        bail!("no base; run `nook base build` first");
+        bail!("no base; run `replica base build` first");
     }
     let findings = base_check::check_base(&base)?;
     if findings.is_empty() {

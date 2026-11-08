@@ -5,26 +5,26 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::tempdir;
 
-fn nook_bin() -> PathBuf {
+fn replica_bin() -> PathBuf {
     // Use the binary from the current build
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(manifest_dir).join("target/debug/nook")
+    PathBuf::from(manifest_dir).join("target/debug/replica")
 }
 
-fn run_nook(args: &[&str], nook_root: &std::path::Path) -> std::process::Output {
-    Command::new(nook_bin())
+fn run_replica(args: &[&str], replica_root: &std::path::Path) -> std::process::Output {
+    Command::new(replica_bin())
         .args(args)
-        .env("NOOK_ROOT", nook_root)
+        .env("REPLICA_ROOT", replica_root)
         .output()
-        .expect("failed to run nook")
+        .expect("failed to run replica")
 }
 
 #[test]
 fn base_check_detects_absolute_symlink_and_venv() {
     let d = tempdir().unwrap();
-    let nook_root = d.path().join("nook_root");
-    fs::create_dir_all(&nook_root).unwrap();
-    let base = nook_root.join("base");
+    let replica_root = d.path().join("replica_root");
+    fs::create_dir_all(&replica_root).unwrap();
+    let base = replica_root.join("base");
     fs::create_dir_all(base.join("sub")).unwrap();
     fs::write(base.join("sub/file.txt"), b"hello").unwrap();
 
@@ -55,7 +55,7 @@ fn base_check_detects_absolute_symlink_and_venv() {
     .unwrap();
 
     // Run base check
-    let output = run_nook(&["base", "check"], &nook_root);
+    let output = run_replica(&["base", "check"], &replica_root);
     let stderr = String::from_utf8_lossy(&output.stderr);
     eprintln!("stderr: {}", stderr);
 
@@ -68,9 +68,9 @@ fn base_check_detects_absolute_symlink_and_venv() {
 #[test]
 fn base_check_clean_tree_no_warnings() {
     let d = tempdir().unwrap();
-    let nook_root = d.path().join("nook_root");
-    fs::create_dir_all(&nook_root).unwrap();
-    let base = nook_root.join("base");
+    let replica_root = d.path().join("replica_root");
+    fs::create_dir_all(&replica_root).unwrap();
+    let base = replica_root.join("base");
     fs::create_dir_all(base.join("src")).unwrap();
     fs::write(base.join("src/main.rs"), b"fn main() {}").unwrap();
     fs::write(
@@ -84,7 +84,7 @@ fn base_check_clean_tree_no_warnings() {
     symlink("sub", base.join("link_to_sub")).unwrap();
 
     // Run base check
-    let output = run_nook(&["base", "check"], &nook_root);
+    let output = run_replica(&["base", "check"], &replica_root);
     let stderr = String::from_utf8_lossy(&output.stderr);
     eprintln!("stderr: {}", stderr);
 
@@ -95,16 +95,16 @@ fn base_check_clean_tree_no_warnings() {
 #[test]
 fn new_with_post_clone_hook() {
     let d = tempdir().unwrap();
-    let nook_root = d.path().join("nook_root");
-    fs::create_dir_all(&nook_root).unwrap();
-    let base = nook_root.join("base");
+    let replica_root = d.path().join("replica_root");
+    fs::create_dir_all(&replica_root).unwrap();
+    let base = replica_root.join("base");
     fs::create_dir_all(&base).unwrap();
     fs::write(base.join("file.txt"), b"hello").unwrap();
 
     // Create a post-clone script that creates a marker file
     let marker = d.path().join("post_clone_ran");
 
-    let output = run_nook(
+    let output = run_replica(
         &[
             "new",
             "--ttl",
@@ -112,14 +112,14 @@ fn new_with_post_clone_hook() {
             "--post-clone",
             &format!("touch {}", marker.display()),
         ],
-        &nook_root,
+        &replica_root,
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     eprintln!("stdout: {}", stdout);
     eprintln!("stderr: {}", stderr);
 
-    assert!(output.status.success(), "nook new should succeed");
+    assert!(output.status.success(), "replica new should succeed");
     let ws_path = stdout.trim();
     assert!(
         std::path::Path::new(ws_path).exists(),

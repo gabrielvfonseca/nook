@@ -1,5 +1,5 @@
-name = "nook"
+name = "replica"
 version = "0.1.0"
 description = "APFS clonefile workspace manager for agent workloads"
-author = "nook contributors"
+author = "replica contributors"
 agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
