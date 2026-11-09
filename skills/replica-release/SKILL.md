@@ -5,15 +5,12 @@ description: Cut a Replica release. Covers the version bump, CHANGELOG, building
 
 # Replica release and Homebrew
 
-There is no separate tap repository. This repository is the tap:
+There is no tap repository and no root symlink. The formula is
+`homebrew/Formula/replica.rb`, and users install it from its URL:
 
-- `homebrew/Formula/replica.rb` is the formula.
-- The root `Formula` symlink points at `homebrew/Formula/`, which is where Homebrew
-  looks for formulae in a tap.
-- Users run `brew tap gabrielvfonseca/replica https://github.com/gabrielvfonseca/replica`,
-  then `brew trust gabrielvfonseca/replica`, then `brew install gabrielvfonseca/replica/replica`.
-
-Keep the symlink intact. Git stores it as a symlink; do not replace it with a copy.
+```sh
+brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
+```
 
 ## Steps
 
@@ -38,9 +35,7 @@ Keep the symlink intact. Git stores it as a symlink; do not replace it with a co
 6. **Commit the formula** to `main` (PR), so `brew` users get the new checksums.
 7. **Verify** from a clean shell:
    ```sh
-   brew tap gabrielvfonseca/replica https://github.com/gabrielvfonseca/replica
-   brew trust gabrielvfonseca/replica
-   brew install gabrielvfonseca/replica/replica
+   brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
    replica --version && replica help
    ```
 
@@ -55,5 +50,4 @@ Keep the symlink intact. Git stores it as a symlink; do not replace it with a co
 
 - **Tag already exists**: pick the next version, or delete the local and remote tag only after confirming nobody installed it.
 - **Dirty tree**: commit or stash. The script will not publish from uncommitted state.
-- **`brew` says the formula is untrusted**: run `brew trust gabrielvfonseca/replica`.
 - **`replica setup --homebrew`** writes a local formula to `~/homebrew/replica.rb` with placeholder checksums. Prefer the tap for installs.
