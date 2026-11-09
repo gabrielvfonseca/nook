@@ -14,7 +14,12 @@
 - `make help`, `make bench`, and `make skills-check`.
 - Homebrew tap formula and `scripts/release.sh` for rendering it after a release.
 
+- `replica base refresh` fast path: clonefiles the base, fetches origin, resets to `origin/HEAD`, and re-runs setup only if a lockfile changed. Falls back to a full rebuild on failure.
+- Integration tests for git behavior: a workspace commits and pushes without touching the base, and refresh picks up new commits.
+
 ### Changed
+- Dependencies: `sha2` 0.11, `toml` 1.2, `rusqlite` 0.41, `dirs` 7, and current GitHub Actions versions. Lockfile hashing hex-encodes the digest explicitly.
+- README rewritten: git workflow in workspaces, base refresh, disk cost after changes, measured file counts, and an account of the benchmark numbers.
 - `replica setup` installs the `SKILL.md` skill, replacing `skill.toml` and `instructions.md`. It no longer writes the placeholder `skills.sh`.
 - `replica setup` no longer duplicates appended configs when run again.
 - `replica setup` keeps existing replaced configs unless `--force` is given. `--force` always backs up the original first.
@@ -29,4 +34,5 @@
 - Removed an `unwrap` from `replica base check`'s `pyvenv.cfg` parsing, so non-test code follows the no-unwrap rule in AGENTS.md.
 
 ### Notes
-- Not yet benchmarked on an idle machine with the current suite. See docs/BENCHMARKS.md.
+- The current benchmark suite has not yet produced a run on an idle machine. See docs/BENCHMARKS.md.
+- `Cargo.lock` on main had a duplicate `thiserror` entry that stopped cargo from parsing it. It is repaired.

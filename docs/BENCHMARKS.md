@@ -10,12 +10,11 @@ recorded run.
 
 | | |
 |---|---|
-| Suite | `benchmarks/run.sh`, rebuilt 2026-11-09 (hyperfine 2.0, see methodology) |
-| Latest valid run | 2026-10-25, arm64 macOS 26.6.2, **made with the previous harness** (kept below, marked superseded where it is wrong) |
-| Pending | A run of the current suite on an idle machine. The attempt on 2026-11-09 was stopped: the machine's 1-minute load average was above 100 from other long-running processes, so its timings were not usable. |
+| Suite | `benchmarks/run.sh`, with rows for every method plus `replica base refresh` |
+| Latest valid run | 2026-10-25, arm64 macOS 26.6.2, **made with the previous harness**. Kept below, with corrections |
+| Pending | A run of the current suite. It refuses to start while the 1-minute load average is above a quarter of the cores. On 2026-11-09 the load was 60 to 150, from long-running agent sessions (`kilo`, `opencode`) on the same machine. Those timings were discarded. |
 
-Run `make bench` on an idle machine, then add the new results as a section under
-[Results](#results), following the procedure in the `replica-benchmarks` skill.
+To publish the current suite: close other heavy work, check `uptime`, then run `make bench`. The harness records the load average at start and end in its report, so a run can be checked afterwards.
 
 ## Methodology
 
