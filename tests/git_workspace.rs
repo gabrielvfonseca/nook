@@ -185,3 +185,44 @@ fn refresh_reruns_setup_when_a_lockfile_changes() {
     let status = ok(&replica(&f.root, &["base", "status", "--json"]));
     assert!(status.contains("\"stale\":false"), "{status}");
 }
+
+#[test]
+fn ref_branch_matching_lockfile_clones_directly() {
+    let f = fixture(false); // setup = "touch installed"
+    let root = &f.root;
+
+    // Create a dep-bump branch on origin with a different lockfile.
+    git(&f.author, &["checkout", "-q", "-b", "dep-bump"]);
+    fs::write(f.author.join("package-lock.json"), "{\"lock\":2}\n").unwrap();
+    git(&f.author, &["add", "-A"]);
+    git(&f.author, &["commit", "-qm", "bump lock on dep-bump"]);
+    git(&f.author, &["push", "-q", "origin", "dep-bump"]);
+
+    // --ref main matches the base lockfile -> cloned directly.
+    let out = replica(root, &["new", "--ttl", "1h", "--ref", "main"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "replica new --ref main failed: {stderr}"
+    );
+    assert!(
+        stderr.contains("cloned directly"),
+        "expected 'cloned directly', got: {stderr}"
+    );
+
+    // --ref dep-bump has a different lockfile -> drift -> incremental install.
+    let out = replica(root, &["new", "--ttl", "1h", "--ref", "dep-bump"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "replica new --ref dep-bump failed: {stderr}"
+    );
+    assert!(
+        stderr.contains("lockfile drift"),
+        "expected 'lockfile drift', got: {stderr}"
+    );
+    assert!(
+        stderr.contains("running incremental install"),
+        "expected 'running incremental install', got: {stderr}"
+    );
+}

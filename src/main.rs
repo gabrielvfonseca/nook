@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use replica::error::{self, CliError, EXIT_DISK_FULL, EXIT_NO_BASE};
 use replica::ui::{self, Status};
 use replica::{base_check, clone, gc, help, lockfile, setup, store, util, volume};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,6 +47,9 @@ enum Cmd {
         /// Fail (exit 2) instead of warning when the base is stale
         #[arg(long)]
         require_fresh: bool,
+        /// Branch to create the workspace from; checked against the base lockfile hash
+        #[arg(long = "ref")]
+        ref_branch: Option<String>,
     },
     /// List active workspaces
     #[command(display_order = 3)]
@@ -206,7 +210,17 @@ fn run() -> Result<()> {
             name,
             post_clone,
             require_fresh,
-        } => new_workspace(&r, &ws_root, &db, &ttl, name, post_clone, require_fresh)?,
+            ref_branch,
+        } => new_workspace(
+            &r,
+            &ws_root,
+            &db,
+            &ttl,
+            name,
+            post_clone,
+            require_fresh,
+            ref_branch.as_deref(),
+        )?,
         Cmd::Env { id } => {
             let ws = require_ws(&db, &id)?;
             let p = ws_root.join(&ws.id);
@@ -257,6 +271,7 @@ fn require_ws(db: &rusqlite::Connection, id: &str) -> Result<store::Ws> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_workspace(
     r: &Path,
     ws_root: &Path,
@@ -265,6 +280,7 @@ fn new_workspace(
     name: Option<String>,
     post_clone: Option<String>,
     require_fresh: bool,
+    ref_branch: Option<&str>,
 ) -> Result<()> {
     let ttl_secs = util::parse_ttl(ttl)?;
     let base = r.join("base");
@@ -283,14 +299,63 @@ fn new_workspace(
     // concurrent `replica gc` never removes a workspace that is still being
     // set up.
     gc::create_lease(ws_root, &id)?;
+    // Extract what we need before base_info goes out of scope.
+    let setup_cmd = base_info.as_ref().and_then(|i| i.setup_cmd.as_deref());
+    let repo = base_info.as_ref().and_then(|i| i.repo.as_deref());
+    let base_lockfile_hash = base_info.as_ref().and_then(|i| i.lockfile_hash.as_deref());
     store::insert(
         db,
         &id,
         name.as_deref(),
         &dst.to_string_lossy(),
         ttl_secs,
-        base_info.and_then(|i| i.lockfile_hash),
+        base_lockfile_hash.map(|s| s.to_string()),
     )?;
+
+    // --ref: decide whether the branch's lockfile matches the base.
+    // Match -> plain clone. Mismatch -> clone then run the setup command
+    // (incremental install) so the workspace gets correct dependencies.
+    if let Some(branch) = ref_branch {
+        let drift = ref_lockfile_drift(base_lockfile_hash, repo, branch)?;
+        if drift {
+            ui::status(
+                Status::Warn,
+                &format!("lockfile drift on branch `{branch}`; running incremental install"),
+            );
+            if let Some(setup) = setup_cmd {
+                ui::status(
+                    Status::Info,
+                    &format!("running incremental install: {setup}"),
+                );
+                let ok = Command::new("sh")
+                    .arg("-c")
+                    .arg(setup)
+                    .current_dir(&dst)
+                    .status()?
+                    .success();
+                if !ok {
+                    return Err(CliError::new(
+                        1,
+                        format!("incremental install failed for branch `{branch}`"),
+                    )
+                    .with_hint(format!(
+                        "the workspace was cloned; inspect it or remove it with `replica rm {id}`"
+                    ))
+                    .into());
+                }
+            } else {
+                ui::status(
+                    Status::Warn,
+                    "no setup command recorded for the base; skipping incremental install",
+                );
+            }
+        } else {
+            ui::status(
+                Status::Ok,
+                &format!("branch `{branch}` lockfile matches base; cloned directly"),
+            );
+        }
+    }
 
     if let Some(cmd) = post_clone {
         ui::status(Status::Info, &format!("running post-clone hook: {cmd}"));
@@ -377,6 +442,62 @@ fn enforce_cap(r: &Path) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// Clone `--ref <branch>` from the recorded repo into a temp dir and compare
+/// its lockfile hash to the base's. Returns true if they differ (lockfile
+/// drift, so an incremental install is needed), false if they match.
+/// On any error (unreachable repo, no lockfiles) reports drift so the workspace
+/// gets an incremental install rather than stale dependencies.
+fn ref_lockfile_drift(
+    base_lockfile_hash: Option<&str>,
+    repo: Option<&str>,
+    branch: &str,
+) -> Result<bool> {
+    let Some(repo) = repo else {
+        ui::status(
+            Status::Warn,
+            "no repo recorded for the base; cannot compare ref lockfile",
+        );
+        return Ok(true);
+    };
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "replica-ref-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let drift = (|| -> Result<bool> {
+        fs::create_dir_all(&temp_dir)?;
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--quiet",
+                "--single-branch",
+                "--branch",
+                branch,
+                "--",
+                repo,
+                temp_dir
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid temp dir path"))?,
+            ])
+            .status()?;
+        if !status.success() {
+            ui::status(
+                Status::Warn,
+                &format!("could not fetch branch `{branch}` from {repo}; assuming drift"),
+            );
+            return Ok(true);
+        }
+        let branch_hash = lockfile::compute_lockfile_hash(&temp_dir)?;
+        Ok(branch_hash.as_deref() != base_lockfile_hash)
+    })();
+    let _ = fs::remove_dir_all(&temp_dir);
+    drift
 }
 
 fn list_workspaces(db: &rusqlite::Connection, json: bool) -> Result<()> {

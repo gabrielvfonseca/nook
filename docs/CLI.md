@@ -18,7 +18,7 @@ guided overview, and `replica help <topic>` covers one topic. `replica <command>
 ### `replica new`
 
 ```
-replica new [--ttl 2h] [--name LABEL] [--post-clone CMD] [--require-fresh]
+replica new [--ttl 2h] [--name LABEL] [--post-clone CMD] [--require-fresh] [--ref BRANCH]
 ```
 
 Clones the base into a new workspace with `clonefile(2)`. It prints the path on stdout and nothing else, so `cd "$(replica new)"` works.
@@ -29,6 +29,7 @@ Clones the base into a new workspace with `clonefile(2)`. It prints the path on 
 | `--name` | none | Label shown by `replica list`. |
 | `--post-clone` | none | Shell command run inside the new workspace after cloning. A failure keeps the workspace and exits 1. |
 | `--require-fresh` | off | Exit 2 instead of warning when the base is stale. |
+| `--ref` | none | Branch to create the workspace from. If the branch's lockfile hash matches the base, clone as normal and report "cloned directly". If it differs, clone then run the setup command (an incremental install) and report "lockfile drift on <branch>; running incremental install". |
 
 Fails with exit 2 if no base exists, with exit 4 if `REPLICA_MAX_BYTES` is reached, and with exit 3 if the base and `ws/` are on different volumes.
 
