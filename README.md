@@ -12,9 +12,17 @@ replica rm <id>                                 # done; or let the TTL expire
 
 ## Why
 
-Creating files is one of the slowest things macOS does. An agent run creates thousands of them (a checkout, `node_modules`, build output), and a fresh install takes seconds to minutes before the agent does any work.
+Agent workloads are dominated by creating and deleting small files (a checkout,
+`node_modules`, build output), and that's where macOS is slowest. A fresh
+install takes seconds to minutes before the agent does any work.
 
-Replica builds a **base** once: a git clone with its dependencies installed. Each `replica new` clones that base with one `clonefile(2)` call. The data blocks stay shared with the base until a file changes, so the new workspace is ready almost at once.
+Replica builds a **base** once: a git clone with its dependencies installed.
+Each `replica new` clones that base with one `clonefile(2)` call. The data
+blocks stay shared with the base until a file changes, so the new workspace is
+ready almost at once. Measured on an Apple M1 Max, `replica new` of a 1,700-file
+project takes about 100 ms at N = 1 and about 230 ms at N = 10 concurrent
+workspaces, versus seconds for `git clone` plus an install.
+[Numbers and methodology](docs/BENCHMARKS.md).
 
 ## What you get
 
@@ -131,34 +139,48 @@ Spotlight can also add writes on a busy volume. `scripts/setup-volume.sh` turns 
 - **Path-dependent build output.** Some tools write absolute paths into their output: Python venvs, `node_modules/.bin` scripts, Cargo fingerprints, TypeScript `.tsbuildinfo`. These break in a clone. Run `replica base check` to find them, then fix them with `--post-clone` or by regenerating them. See the [replica-base skill](skills/replica-base/SKILL.md).
 - **Cost scales with file count.** Each clone writes metadata for every file. Replica is much faster than copying or cloning file by file, but it is not free, and very large trees (hundreds of thousands of files) have not been measured.
 - **Same volume only.** Source, base, and workspaces must share one APFS volume.
-- **Not a speedup inside a running agent.** Replica makes workspace creation fast. It does not speed up reads or writes during a run, nor does it fix Spotlight or XProtect scanning.
+- **Not a speedup inside a running agent.** Replica makes workspace creation fast. It does not speed up reads or writes during a run, does not reduce the RAM or CPU used by running many agents at once, and does not fix Spotlight or XProtect scanning.
+- **Lockfile changes still need an install.** If a branch's lockfile differs from the base, the workspace needs an incremental install (or a refreshed base); cloning alone does not update dependencies.
 - **macOS only.** Linux and Windows are out of scope.
 
 ## Benchmarks
 
-The suite in [`benchmarks/`](benchmarks/README.md) compares `replica new` with `git clone` plus install, `git worktree` plus install, and `cp -c`, and it also measures `replica rm` and `replica base refresh`.
+The suite in [`benchmarks/`](benchmarks/README.md) compares `replica new` with
+`git clone` plus install, `git worktree` plus install, `pnpm` with the global
+virtual store, and `cp -c`, and it also measures `replica rm` and
+`replica base refresh`, at concurrency N = 1, 5, and 10.
 
 ```sh
-make bench                                         # bundled fixture project (~15 min)
-make bench PROJECT=~/code/app SETUP="npm ci" RUNS=30
+make release                                         # target/release/replica
+make bench                                           # bundled fixture (~15 min)
+make bench --concurrency 1,5,10                      # parallel workspace creation
 ```
 
-Two runs are recorded in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), with methodology and corrections:
+Full results, methodology, machine details, and exact commands are in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-- **2026-11-09, under heavy load** (1-minute load 171–184 on 10 cores, from other sessions). Relative ordering matches the clean run, but absolute times are inflated.
+Headline (Apple M1 Max, macOS 26.6.2, under load, 1,739-file npm project):
 
-  | Method | Median |
-  |---|---|
-  | `git clone` + setup | 3.9 s |
-  | `git worktree` + setup | 3.1 s |
-  | `cp -c -R` of a built tree | 1.3 s |
-  | **`replica new`** | **78 ms** |
-  | `replica rm` | 235 ms |
-  | `replica base refresh` (no upstream changes) | 534 ms |
+| Concurrency | `replica new` median | `cp -c -R` median | `git clone` + setup median |
+|---|---:|---:|---:|
+| N = 1 | ~114 ms | ~958 ms | ~3.96 s |
+| N = 10 (all at once) | ~230 ms | ~3.55 s | ~4 s |
 
-- **2026-10-25, quiet machine** (previous harness, 1,842 files): `replica new` 66 ms, `git clone` + setup 3.10 s, `cp -c` 1.33 s. Its `replica rm` row and its disk column are superseded.
+`replica new` is about 15x faster than `cp -c -R` even with 10 concurrent
+workspaces, and tens of times faster than `git clone` plus an install. The
+one-time `replica base build` (~2–3 s) is less than a single `git clone` +
+setup, so Replica comes out ahead on the very first workspace.
 
-Replica adds about 1.4 MB of APFS metadata per clone for a 1,700-file project, measured on a quiet machine. Data blocks are shared, and changed files cost real space as the agent works. The [replica-benchmarks skill](skills/replica-benchmarks/SKILL.md) lists what a clean run needs.
+- **2026-11-09, under load** (1-minute load 171–184 on 10 cores). Relative
+  ordering matches a clean run, but absolute times are inflated; do not quote
+  the ratios as settled.
+- **2026-10-25, quiet machine** (previous harness, 1,842 files): `replica new`
+  66 ms, `git clone` + setup 3.10 s, `cp -c` 1.33 s.
+
+Replica adds APFS metadata per file per clone (~1.4 MB for a 1,700-file project
+on a quiet machine); data blocks are shared with the base and changed files cost
+real space as the agent works. The [replica-benchmarks skill]
+(skills/replica-benchmarks/SKILL.md) lists what a clean run needs.
 
 ## Development
 

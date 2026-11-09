@@ -1,50 +1,72 @@
 #!/usr/bin/env bash
-# Replica benchmark suite.
+# Replica benchmark suite (extended for Phase 2).
 #
-# Compares creating a fresh, fully installed project copy four ways:
-#   git clone + setup, git worktree + setup, cp -c (clonefile) of a prebuilt tree, replica new.
-# and removing one: replica rm vs rm -rf of a clonefile copy.
+# Compares creating fresh, fully installed project copies across:
+#   - project sizes: small (~2k), medium (~30k), large (~100k+ files)
+#   - concurrency: N = 1, 5, 10 workspaces created at the same time
+#   - methods: git clone + setup, git worktree + setup,
+#              pnpm with the global virtual store, cp -c -R, replica new
+#
+# Records per run: median and P95 wall time, total wall time for all N,
+# disk used before and after (df on the volume + replica stats), and peak
+# memory pressure (context only; Replica makes no RAM claim).
+#
+# Reports the one-time cost of `replica base build` separately and the
+# break-even point (after how many workspaces Replica comes out ahead vs
+# git clone + setup).
 #
 # Usage:
-#   benchmarks/run.sh                          # fixture project, default runs
-#   benchmarks/run.sh --project DIR            # your project (must have a setup command)
-#   benchmarks/run.sh --setup "pnpm install --frozen-lockfile" --runs 30
+#   benchmarks/run.sh                                  # default fixture, N=1
+#   benchmarks/run.sh --concurrency 1,5,10             # parallel creation
+#   benchmarks/run.sh --project "$PWD/repo|npm ci" --concurrency 1,5,10
 #
-# Writes benchmarks/results/<date>-<arch>-macos<version>.{md,json}. See benchmarks/README.md.
+# Writes benchmarks/results/<date>-<arch>-macos<version>.{md,json}.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT="$HERE/fixtures/npm-app"
-SETUP_CMD="npm ci --no-audit --no-fund"
-RUNS=20           # cheap operations (cp, replica new, replica rm, rm -rf)
-SLOW_RUNS=10      # operations that install dependencies (git clone + setup, worktree + setup)
-DISK_RUNS=20      # disk-per-clone sampling (cheap operations)
+DEFAULT_PROJECT="$HERE/fixtures/npm-app"
+DEFAULT_SETUP="npm ci --no-audit --no-fund"
+RUNS=20           # measurement batches for cheap operations
+SLOW_RUNS=10      # measurement batches for install operations
+WARMUP=3          # untimed warmup batches
+CONCURRENCY="1"   # comma-separated concurrency levels
 OUT_DIR="$HERE/results"
 KEEP=0
 ALLOW_BUSY=0
+METHODS=""        # empty = all methods
+PROJECT_SPECS=""  # empty = default fixture
 
 usage() {
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
-  --project DIR      project to benchmark (default: benchmarks/fixtures/npm-app)
-  --setup CMD        dependency install command run in each clone (default: npm ci)
-  --runs N           runs for cheap operations (default 20; p95 needs >= 20)
-  --slow-runs N      runs for install operations (default 10)
-  --out DIR          results directory (default benchmarks/results)
-  --keep             keep the scratch directory for inspection
-  --allow-busy       run even if the 1-minute load average is high (results will be noisy)
-  -h, --help         show this help
+  --project DIR:SETUP   project to benchmark (repeatable). "DIR" is copied
+                        (without node_modules/.git/target) into a fresh git
+                        repo and "SETUP" is the install command run inside
+                        each clone. If SETUP is omitted, --setup is used.
+                        Default: benchmarks/fixtures/npm-app.
+  --setup CMD           default install command (default: npm ci)
+  --concurrency N       comma-separated concurrency levels (default: 1;
+                        e.g. 1,5,10 creates N workspaces at the same time)
+  --runs N              measurement batches per method (default 20 cheap /
+                        10 for operations that install dependencies)
+  --methods LIST        comma-separated method subset:
+                        git-clone,git-worktree,pnpm-store,cp-clonefile,replica
+  --out DIR             results directory (default benchmarks/results)
+  --keep                keep the scratch directory for inspection
+  --allow-busy          run even if the 1-minute load average is high
+  -h, --help            show this help
 EOF
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --project) PROJECT="$2"; shift 2 ;;
-    --setup) SETUP_CMD="$2"; shift 2 ;;
-    --runs) RUNS="$2"; shift 2 ;;
-    --slow-runs) SLOW_RUNS="$2"; shift 2 ;;
+    --project) PROJECT_SPECS="$PROJECT_SPECS $2"; shift 2 ;;
+    --setup) DEFAULT_SETUP="$2"; shift 2 ;;
+    --concurrency) CONCURRENCY="$2"; shift 2 ;;
+    --runs) RUNS="$2"; SLOW_RUNS="$2"; shift 2 ;;
+    --methods) METHODS="$2"; shift 2 ;;
     --out) OUT_DIR="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --allow-busy) ALLOW_BUSY=1; shift ;;
@@ -53,17 +75,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ---- preflight -------------------------------------------------------------
-
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1 ($2)" >&2; exit 1; }; }
 need hyperfine "brew install hyperfine"
 need jq "brew install jq"
 need replica "cargo build --release && PREFIX=\$HOME/.local make install"
 need git "xcode-select --install"
+need python3 "python3 is required for statistics and sampling"
+need bc "bc is required for arithmetic"
 
 [ "$(uname -s)" = "Darwin" ] || { echo "benchmarks need macOS (clonefile)" >&2; exit 1; }
 
-# Timings are only meaningful on an idle machine. Refuse when the 1-minute load is above a quarter of the cores.
+# Refuse to run on a busy machine (timings only meaningful when idle).
 NCPU=$(sysctl -n hw.ncpu)
 LOAD_START=$(sysctl -n vm.loadavg | awk '{print $2}')
 if [ "$ALLOW_BUSY" -ne 1 ] && awk -v l="$LOAD_START" -v c="$NCPU" 'BEGIN { exit !(l > c / 4) }'; then
@@ -72,155 +94,343 @@ if [ "$ALLOW_BUSY" -ne 1 ] && awk -v l="$LOAD_START" -v c="$NCPU" 'BEGIN { exit 
   ps -Ao pcpu,comm -r | sed -n '2,6p' >&2
   exit 1
 fi
-[ -d "$PROJECT" ] || { echo "project not found: $PROJECT" >&2; exit 1; }
-PROJECT="$(cd "$PROJECT" && pwd)"
+
+# Resolve project specs "DIR:SETUP" or "DIR" (-> --setup default).
+PROJECTS=(); SETUPS=()
+add_project() {
+  local spec="$1"
+  local dir="${spec%%:*}"
+  local setup="${spec#*:}"
+  [ "$setup" = "$spec" ] && setup="$DEFAULT_SETUP"
+  dir="$(cd "$dir" 2>/dev/null && pwd)" || { echo "project not found: $dir" >&2; exit 1; }
+  PROJECTS+=("$dir"); SETUPS+=("$setup")
+}
+if [ -n "$PROJECT_SPECS" ]; then
+  # shellcheck disable=SC2086
+  for spec in $PROJECT_SPECS; do add_project "$spec"; done
+else
+  add_project "$DEFAULT_PROJECT"
+fi
+for p in "${PROJECTS[@]}"; do [ -d "$p" ] || { echo "project not found: $p" >&2; exit 1; }; done
+
+# Validate concurrency levels.
+IFS=',' read -ra CONCS <<< "$CONCURRENCY"
+for c in "${CONCS[@]}"; do
+  case "$c" in ''|*[!0-9]*) echo "invalid concurrency: $c" >&2; exit 2 ;; esac
+  [ "$c" -ge 1 ] || { echo "concurrency must be >= 1: $c" >&2; exit 2; }
+done
+
+# Validate methods.
+ALL_METHODS="git-clone git-worktree pnpm-store cp-clonefile replica"
+if [ -n "$METHODS" ]; then
+  IFS=',' read -ra METHODS_SEL <<< "$METHODS"
+  for m in "${METHODS_SEL[@]}"; do
+    case "$m" in
+      git-clone|git-worktree|pnpm-store|cp-clonefile|replica) ;;
+      *) echo "unknown method: $m (allowed: $ALL_METHODS)" >&2; exit 2 ;;
+    esac
+  done
+else
+  METHODS_SEL=($ALL_METHODS)
+fi
 
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/replica-bench.XXXXXX")"
-# Keep Spotlight from indexing the thousands of files we create; its writes would skew disk sampling.
 touch "$SCRATCH/.metadata_never_index"
 cleanup() {
-  if [ "$KEEP" -eq 1 ]; then
-    echo "kept scratch: $SCRATCH"
-    return
-  fi
-  # Remove workspaces the run created, then the scratch tree. Both live under $SCRATCH.
-  if [ -d "$SCRATCH/root/ws" ]; then
+  if [ "$KEEP" -eq 1 ]; then echo "kept scratch: $SCRATCH"; return; fi
+  if [ -d "$SCRATCH/root" ] && command -v replica >/dev/null 2>&1; then
     for ws in "$SCRATCH"/root/ws/*; do
-      [ -e "$ws" ] && replica rm "$(basename "$ws")" >/dev/null 2>&1 || true
+      [ -e "$ws" ] && REPLICA_ROOT="$SCRATCH/root" replica rm "$(basename "$ws")" >/dev/null 2>&1 || true
     done
+    rm -rf "$SCRATCH/root"
   fi
   rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
 
-export REPLICA_ROOT="$SCRATCH/root"
-export npm_config_cache="$SCRATCH/npm-cache"   # one npm cache for every method, warmed below
 export NO_COLOR=1
-mkdir -p "$REPLICA_ROOT" "$SCRATCH/work"
+REPLICA_ROOT="$SCRATCH/root"
+export REPLICA_ROOT
+mkdir -p "$REPLICA_ROOT"
+export npm_config_cache="$SCRATCH/npm-cache"
+mkdir -p "$npm_config_cache"
 
-# The replica root, git clones, and workspaces must share one APFS volume.
 [ "$(stat -f %d "$SCRATCH")" = "$(stat -f %d "$REPLICA_ROOT")" ] || { echo "scratch and root differ in volume" >&2; exit 1; }
 diskutil info "$(df "$SCRATCH" | tail -1 | awk '{print $NF}')" 2>/dev/null | grep -q "APFS" \
   || { echo "scratch volume is not APFS; clonefile would fail" >&2; exit 1; }
 
 FREE_KB=$(df -k "$SCRATCH" | tail -1 | awk '{print $4}')
 if [ "$FREE_KB" -lt 2000000 ]; then
-  echo "need at least 2 GB free for the benchmark; have $((FREE_KB / 1024)) MB" >&2
-  exit 1
+  echo "need at least 2 GB free for the benchmark; have $((FREE_KB / 1024)) MB" >&2; exit 1
 fi
 
 HELPERS="$HERE/helpers.sh"
 W="$SCRATCH/work"
-SRC="$SCRATCH/src"
 RAW="$SCRATCH/raw"
-mkdir -p "$RAW"
+mkdir -p "$W" "$RAW"
 
-# ---- source repo ------------------------------------------------------------
+log() { echo "== $*" >&2; }
 
-copy_project() {
-  # Copy the project without any previous install output.
-  (cd "$PROJECT" && tar --exclude=node_modules --exclude=.git -cf - .) | (mkdir -p "$SRC" && cd "$SRC" && tar -xf -)
-}
-copy_project
-git -C "$SRC" init -q
-git -C "$SRC" add -A
-git -C "$SRC" -c user.name=replica-bench -c user.email=bench@localhost commit -qm "benchmark source" >/dev/null
+# -------- small utilities ----------------------------------------------------
 
-PKG_COUNT=$(grep -c '"resolved"' "$SRC/package-lock.json" 2>/dev/null || true)
-PKG_COUNT=${PKG_COUNT:-0}
-
-# ---- warm caches and build the base -----------------------------------------
-
-echo "== warming npm cache"
-(cd "$(mktemp -d "$W/warm.XXXXXX")" && cp -R "$SRC/." . && rm -rf .git && sh -c "$SETUP_CMD" >/dev/null 2>&1)
-
-echo "== building replica base (informational: a one-time cost)"
-BASE_START=$(python3 -c 'import time; print(time.time())')
-replica base build --repo "$SRC" --setup "$SETUP_CMD" >"$RAW/base-build.log" 2>&1
-BASE_END=$(python3 -c 'import time; print(time.time())')
-BASE_SECS=$(python3 -c "print(f'{$BASE_END - $BASE_START:.2f}')")
-BASE="$REPLICA_ROOT/base"
-[ -d "$BASE" ] || { echo "base build failed; see $RAW/base-build.log" >&2; exit 1; }
-# Installed files (after setup), not the source fixture.
-FILE_COUNT=$(find "$BASE" -path "$BASE/.git" -prune -o -type f -print | wc -l | tr -d ' ')
-
-# ---- timed benchmarks -------------------------------------------------------
-
-REPLICA_VERSION="$(replica --version)"
-REPLICA_PATH="$(command -v replica)"
-BASE_LOGICAL_KB=$(du -sk "$BASE" | awk '{print $1}')
-
-bench() {
-  # bench NAME RUNS WARMUP PREPARE CMD
-  local name="$1" runs="$2" warmup="$3" prepare="$4" cmd="$5" slug json
-  slug=$(echo "$name" | tr -cs 'A-Za-z0-9' '-' | tr 'A-Z' 'a-z')
-  json="$RAW/$slug.json"
-  echo "== $name ($runs runs)"
-  local args=(--runs "$runs" --warmup "$warmup" --style basic --shell=default --export-json "$json" --command-name "$name")
-  [ -n "$prepare" ] && args+=(--prepare "$prepare")
-  hyperfine "${args[@]}" "$cmd" >"$RAW/$slug.log" 2>&1 || { cat "$RAW/$slug.log" >&2; exit 1; }
-  printf "%s\t%s\n" "$slug" "$name" >>"$RAW/order.txt"
+# Copy project into a fresh dir (dropping prior install output) and git-init it.
+prepare_source() {
+  local dest="$1" src="$2"
+  rm -rf "$dest"; mkdir -p "$dest"
+  (cd "$src" && tar --exclude=node_modules --exclude=.git --exclude=target --exclude=.next -cf - .) \
+    | (cd "$dest" && tar -xf -)
+  git -C "$dest" init -q
+  git -C "$dest" add -A
+  git -C "$dest" -c user.name=replica-bench -c user.email=bench@localhost commit -qm "bench source" >/dev/null
 }
 
-bench "shell baseline (true)" "$RUNS" 3 "" "true"
-
-bench "git clone + setup" "$SLOW_RUNS" 1 \
-  "$HELPERS rm-tree $W/git-clone" \
-  "git clone -q '$SRC' '$W/git-clone' && cd '$W/git-clone' && $SETUP_CMD"
-
-bench "git worktree + setup" "$SLOW_RUNS" 1 \
-  "$HELPERS git-clean '$SRC' '$W/wt'" \
-  "git -C '$SRC' worktree add -q --detach '$W/wt' HEAD && cd '$W/wt' && $SETUP_CMD"
-
-bench "cp -c -R of prebuilt base" "$RUNS" 3 \
-  "$HELPERS rm-tree $W/cp-clone" \
-  "cp -c -R '$BASE' '$W/cp-clone'"
-
-bench "replica new" "$RUNS" 3 \
-  "$HELPERS rm-recorded $W/last-path path" \
-  "replica new --ttl 1h >'$W/last-path' 2>/dev/null"
-
-bench "replica rm" "$RUNS" 3 \
-  "$HELPERS new-id $W/rm-id" \
-  "replica rm \"\$(cat '$W/rm-id')\""
-
-bench "rm -rf of a cp -c clone" "$RUNS" 3 \
-  "cp -c -R '$BASE' '$W/rm-target'" \
-  "rm -rf '$W/rm-target'"
-
-# Keeping the base fresh. Nothing changed upstream: this is the common case.
-bench "replica base refresh (no changes)" "$SLOW_RUNS" 1 "" \
-  "replica base refresh >/dev/null 2>&1"
-
-# ---- disk per clone (df delta over many clones) -----------------------------
-
-used_kb() { df -k "$REPLICA_ROOT" | tail -1 | awk '{print $3}'; }
-
-disk_per() {
-  # disk_per N CMD_PER_ITERATION CLEANUP_PER_ITERATION -> prints MB per clone
-  local n="$1" make="$2" clean="$3" before after i
-  sync; sleep 1
-  before=$(used_kb)
-  for i in $(seq 1 "$n"); do eval "$make" >/dev/null 2>&1; done
-  sync; sleep 1
-  after=$(used_kb)
-  for i in $(seq 1 "$n"); do eval "$clean" >/dev/null 2>&1 || true; done
-  python3 -c "print(f'{max(0, $after - $before) / 1024 / $n:.2f}')"
+file_count() { find "$1" -path "$1/.git" -prune -o -type f -print 2>/dev/null | wc -l | tr -d ' '; }
+disk_used_kb() { df -k "$REPLICA_ROOT" | tail -1 | awk '{print $3}'; }
+memory_pressure_sample() {
+  memory_pressure 2>/dev/null | awk '/System-wide memory free percentage/{print $NF}' || echo unknown
 }
 
-echo "== disk per clone"
-DISK_CP=$(disk_per "$DISK_RUNS" "cp -c -R '$BASE' '$W/disk-cp-\$i'" "rm -rf '$W/disk-cp-\$i'")
-DISK_REPLICA=$(disk_per "$DISK_RUNS" "replica new --ttl 1h >/dev/null 2>&1" "true")
-# Clean up the workspaces the replica sample left behind.
-for ws in "$REPLICA_ROOT"/ws/*; do [ -e "$ws" ] && replica rm "$(basename "$ws")" >/dev/null 2>&1 || true; done
-# A git clone has no block sharing, so du (allocated size) is exact for it. One sample is enough.
-GIT_CHECK="$W/disk-git"
-rm -rf "$GIT_CHECK"
-git clone -q "$SRC" "$GIT_CHECK" && (cd "$GIT_CHECK" && eval "$SETUP_CMD" >/dev/null 2>&1)
-DISK_GIT=$(python3 -c "print(f'{$(du -sk "$GIT_CHECK" | awk '{print $1}') / 1024:.2f}')")
-rm -rf "$GIT_CHECK"
+# Run command $N times concurrently; each writes "start end" (epoch seconds)
+# to COLLECT/$tag.<i>.timing. Returns overall batch wall seconds on stdout.
+run_concurrent() {
+  local tag="$1" n="$2" cmd="$3"
+  local collect="$RAW/collect"
+  mkdir -p "$collect"
+  rm -f "$collect/$tag."*
+  local start end pid i pids=()
+  start=$(python3 -c 'import time; print(time.time())')
+  for i in $(seq 1 "$n"); do
+    {
+      local istart iend
+      istart=$(python3 -c 'import time; print(time.time())')
+      eval "$cmd" >/dev/null 2>&1 || true
+      iend=$(python3 -c 'import time; print(time.time())')
+      printf '%.6f %.6f\n' "$istart" "$iend" >"$collect/$tag.$i.timing"
+    } &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do wait "$pid"; done
+  end=$(python3 -c 'import time; print(time.time())')
+  python3 -c "print('%.6f' % (float('$end') - float('$start')))"
+}
 
-# ---- report -----------------------------------------------------------------
+# median + P95 (nearest-rank) + min/max/count from a file of durations (ms).
+stats_file() {
+  python3 - "$1" <<'PY'
+import sys, statistics
+vals = sorted(float(x) for x in open(sys.argv[1]) if x.strip())
+if not vals:
+    print("0 0 0 0 0 0"); sys.exit()
+n = len(vals)
+print(f"{statistics.mean(vals):.3f} {statistics.median(vals):.3f} "
+      f"{vals[max(0,(n*95+99)//100-1)]:.3f} {vals[0]:.3f} {vals[-1]:.3f} {n}")
+PY
+}
+
+# Clean up any workspaces a method may have left under $W.
+clean_method_ws() {
+  local method="$1"
+  case "$method" in
+    git-clone|git-worktree|pnpm-store|cp-clonefile)
+      rm -rf "$W"/${method}-* 2>/dev/null || true ;;
+    replica)
+      for f in "$W"/replica-path-*; do
+        [ -e "$f" ] || continue
+        local wp; wp="$(cat "$f" 2>/dev/null)"
+        [ -n "$wp" ] && REPLICA_ROOT="$REPLICA_ROOT" replica rm "$(basename "$wp")" >/dev/null 2>&1 || true
+        rm -f "$f"
+      done ;;
+  esac
+}
+
+# -------- per-method workloads (create ONE workspace) ------------------------
+
+wl_git_clone() {   # tag src setup
+  local tag="$1" src="$2" setup="$3"
+  local dest="$W/git-clone-$tag"
+  rm -rf "$dest"
+  git clone -q "$src" "$dest" && (cd "$dest" && sh -c "$setup") >/dev/null 2>&1
+}
+wl_git_worktree() { # tag src setup
+  local tag="$1" src="$2" setup="$3"
+  local dest="$W/wt-$tag"
+  rm -rf "$dest"
+  git -C "$src" worktree add -q --detach "$dest" HEAD >/dev/null 2>&1 && (cd "$dest" && sh -c "$setup") >/dev/null 2>&1
+}
+wl_pnpm_store() {  # tag src setup
+  local tag="$1" src="$2" setup="$3"
+  local dest="$W/pnpm-$tag"
+  rm -rf "$dest"
+  cp -a "$src/." "$dest/"; rm -rf "$dest/.git"
+  (cd "$dest" && PNPM_STORE_DIR="$W/shared-cache/pnpm-store" sh -c "$setup") >/dev/null 2>&1
+}
+wl_cp_clonefile() { # tag base
+  local tag="$1" base="$2"
+  local dest="$W/cp-$tag"
+  rm -rf "$dest"; cp -c -R "$base" "$dest" >/dev/null 2>&1
+}
+wl_replica_new() { # tag
+  local tag="$1" f="$W/replica-path-$tag"
+  REPLICA_ROOT="$REPLICA_ROOT" replica new --ttl 1h >"$f" 2>/dev/null
+}
+
+# -------- benchmark one (project, concurrency, method) -----------------------
+
+bench_batch() {
+  # $1 pname $2 src $3 setup $4 base $5 base_files $6 conc $7 method
+  local pname="$1" src="$2" setup="$3" base="$4" base_files="$5"
+  local conc="$6" method="$7"
+  local tag="${pname}-c${conc}-${method}"
+  local collect="$RAW/collect"
+  mkdir -p "$collect"
+
+  log "project=$pname concurrency=$conc method=$method"
+
+  # Choose run count.
+  local n_runs="$RUNS"
+  case "$method" in git-clone|git-worktree|pnpm-store) n_runs="$SLOW_RUNS" ;; esac
+
+  # Warmup batches (untimed).
+  for i in $(seq 1 "$WARMUP"); do
+    local wt="warm$i"
+    case "$method" in
+      git-clone)    wl_git_clone   "$wt" "$src" "$setup" ;;
+      git-worktree) wl_git_worktree "$wt" "$src" "$setup" ;;
+      pnpm-store)   wl_pnpm_store  "$wt" "$src" "$setup" ;;
+      cp-clonefile) wl_cp_clonefile "$wt" "$base" ;;
+      replica)      wl_replica_new "$wt" ;;
+    esac
+  done
+  clean_method_ws "$method"
+
+  # Disk + memory pressure before.
+  local disk_before mem_before rs_before
+  disk_before=$(disk_used_kb)
+  mem_before=$(memory_pressure_sample)
+  rs_before=$(REPLICA_ROOT="$REPLICA_ROOT" replica stats --json 2>/dev/null || echo '{}')
+
+  # Measurement batches: each launches `conc` concurrent creations.
+  local batch wall total_wall_s=0
+  local all_durations="$RAW/collect/${tag}.durations"
+  : >"$all_durations"
+  for batch in $(seq 1 "$n_runs"); do
+    local btag="${tag}-b${batch}"
+    case "$method" in
+      git-clone)
+        wall=$(run_concurrent "$btag" "$conc" "wl_git_clone job\$RANDOM '$src' '$setup'") ;;
+      git-worktree)
+        wall=$(run_concurrent "$btag" "$conc" "wl_git_worktree job\$RANDOM '$src' '$setup'") ;;
+      pnpm-store)
+        wall=$(run_concurrent "$btag" "$conc" "wl_pnpm_store job\$RANDOM '$src' '$setup'") ;;
+      cp-clonefile)
+        wall=$(run_concurrent "$btag" "$conc" "wl_cp_clonefile job\$RANDOM '$base'") ;;
+      replica)
+        wall=$(run_concurrent "$btag" "$conc" "wl_replica_new job\$RANDOM") ;;
+    esac
+    total_wall_s=$(awk -v a="$total_wall_s" -v b="$wall" 'BEGIN{printf "%.6f", a+b}')
+    # collect this batch's individual durations
+    for i in $(seq 1 "$conc"); do
+      cat "$collect/$btag.$i.timing" 2>/dev/null >>"$all_durations" || true
+    done
+  done
+
+  # Disk + memory after.
+  local disk_after mem_after rs_after
+  disk_after=$(disk_used_kb)
+  mem_after=$(memory_pressure_sample)
+  rs_after=$(REPLICA_ROOT="$REPLICA_ROOT" replica stats --json 2>/dev/null || echo '{}')
+
+  # Convert start/end pairs into per-iteration durations (ms).
+  local durations="$RAW/collect/${tag}.dur-ms"
+  : >"$durations"
+  while read -r s e; do
+    [ -n "$s" ] && [ -n "$e" ] \
+      && awk -v s="$s" -v e="$e" 'BEGIN{printf "%.3f\n", (e - s) * 1000}' >>"$durations"
+  done <"$all_durations"
+
+  local mean median p95 mn mx n
+  read -r mean median p95 mn mx n < <(stats_file "$durations")
+
+  local disk_delta
+  disk_delta=$(awk -v a="$disk_after" -v b="$disk_before" 'BEGIN{printf "%.1f", a-b}')
+
+  local total_wall_ms
+  total_wall_ms=$(awk -v s="$total_wall_s" 'BEGIN{printf "%.1f", s*1000}')
+
+  jq -c -n \
+    --arg pname "$pname" --arg conc "$conc" --arg method "$method" \
+    --argjson n_runs "$n_runs" --argjson conc "$conc" \
+    --arg mean "$mean" --arg median "$median" --arg p95 "$p95" \
+    --arg min "$mn" --arg max "$mx" --argjson n "$n" \
+    --arg total_wall_ms "$total_wall_ms" \
+    --arg disk_before_kb "$disk_before" --arg disk_after_kb "$disk_after" \
+    --arg disk_delta_kb "$disk_delta" \
+    --arg mem_before "$mem_before" --arg mem_after "$mem_after" \
+    --arg rs_before "$rs_before" --arg rs_after "$rs_after" \
+    '{project:$pname, concurrency:($conc|tonumber), method:$method,
+      batches:$n_runs, concurrency_level:$conc,
+      mean_ms:($mean|tonumber), median_ms:($median|tonumber),
+      p95_ms:($p95|tonumber), min_ms:($min|tonumber), max_ms:($max|tonumber),
+      iterations:$n, total_wall_ms:($total_wall_ms|tonumber),
+      disk_before_kb:($disk_before_kb|tonumber),
+      disk_after_kb:($disk_after_kb|tonumber), disk_delta_kb:($disk_delta_kb|tonumber),
+      mem_pressure_before:$mem_before, mem_pressure_after:$mem_after,
+      replica_stats_before:$rs_before, replica_stats_after:$rs_after}' \
+    >>"$RAW/batches.jsonl"
+
+  clean_method_ws "$method"
+
+  log "  ${method} c=$conc median=${median}ms P95=${p95}ms "
+  log "  total_wall=${total_wall_ms}ms disk_delta=${disk_delta}KB iters=$n"
+}
+
+# -------- main ---------------------------------------------------------------
+
+echo "== Replica benchmark suite (Phase 2)"
+echo "  machine: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)"
+echo "  macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+echo "  concurrency: ${CONCS[*]}  methods: ${METHODS_SEL[*]}"
+echo "  projects: ${#PROJECTS[@]}"
+
+REPLICA_VERSION="$(replica --version 2>/dev/null || echo unknown)"
+: >"$RAW/batches.jsonl"
+
+for pidx in "${!PROJECTS[@]}"; do
+  pname="project-$((pidx + 1))"
+  src_project="${PROJECTS[$pidx]}"
+  setup="${SETUPS[$pidx]}"
+
+  log "preparing source for $pname ($src_project)"
+  SRC="$W/src-$pidx"
+  prepare_source "$SRC" "$src_project"
+  FILE_COUNT=$(file_count "$SRC")
+  log "  $FILE_COUNT files in source"
+
+  # Build the replica base once (one-time cost, timed separately).
+  # replica always publishes to $REPLICA_ROOT/base.
+  BASE="$REPLICA_ROOT/base"
+  rm -rf "$BASE"
+  log "building replica base for $pname (one-time cost)"
+  base_start=$(python3 -c 'import time; print(time.time())')
+  REPLICA_ROOT="$REPLICA_ROOT" replica base build --repo "$SRC" --setup "$setup" >"$RAW/base-build-$pidx.log" 2>&1
+  base_end=$(python3 -c 'import time; print(time.time())')
+  base_secs=$(python3 -c "print(f'{$base_end - $base_start:.3f}')")
+  base_logical_kb=$(du -sk "$BASE" 2>/dev/null | awk '{print $1}')
+  base_files=$(file_count "$BASE")
+  [ -d "$BASE" ] || { echo "base build failed for $pname; see $RAW/base-build-$pidx.log" >&2; exit 1; }
+  log "  base built in ${base_secs}s ($base_files files, ${base_logical_kb} KB)"
+
+  # Stash base metadata for the report.
+  echo "$pidx $base_secs $base_logical_kb $base_files $setup" >>"$RAW/base-meta.txt"
+
+  for conc in "${CONCS[@]}"; do
+    for method in "${METHODS_SEL[@]}"; do
+      bench_batch "$pname" "$SRC" "$setup" "$BASE" "$base_files" "$conc" "$method"
+    done
+  done
+done
+
+# -------- aggregate + report -------------------------------------------------
 
 MACHINE="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)"
 LOAD_END=$(sysctl -n vm.loadavg | awk '{print $2}')
@@ -233,65 +443,121 @@ mkdir -p "$OUT_DIR"
 MD="$OUT_DIR/$SLUG.md"
 JSON="$OUT_DIR/$SLUG.json"
 
-# Merge hyperfine results with computed p95 (nearest rank) into one JSON document.
-MERGED="$RAW/merged.json"
-echo "[]" >"$MERGED"
-while IFS=$'\t' read -r slug name; do
-  jq -c --slurpfile f "$RAW/$slug.json" --arg name "$name" \
-    '($f[0].results[0].summary.time_wall_clock) as $w
-     | ($f[0].results[0].measurements | map(.time_wall_clock.value) | sort) as $t
-     | . + [{name: $name, mean: $w.mean, median: $w.median, min: $w.min, max: $w.max,
-             stddev: $w.stddev, runs: ($t | length), p95: $t[(($t | length) * 0.95 | ceil) - 1]}]' "$MERGED" >"$MERGED.tmp"
-  mv "$MERGED.tmp" "$MERGED"
-done <"$RAW/order.txt"
+export DATE MACHINE MACOS BUILD ARCH NCPU LOAD_START LOAD_END REPLICA_VERSION
+python3 - "$RAW/batches.jsonl" "$RAW/base-meta.txt" "$JSON" <<'PY'
+import json, os, sys
+batches_path, meta_path, json_path = sys.argv[1], sys.argv[2], sys.argv[3]
+batches = []
+for line in open(batches_path):
+    line = line.strip()
+    if line:
+        batches.append(json.loads(line))
 
-jq -n --arg date "$DATE" --arg machine "$MACHINE" --arg macos "$MACOS" --arg build "$BUILD" \
-  --arg arch "$ARCH" --arg project "$PROJECT" --arg setup "$SETUP_CMD" --arg replica "$REPLICA_VERSION" \
-  --arg files "$FILE_COUNT" --arg pkgs "$PKG_COUNT" --arg base_secs "$BASE_SECS" \
-  --arg base_kb "$BASE_LOGICAL_KB" --arg dcp "$DISK_CP" --arg drep "$DISK_REPLICA" --arg dgit "$DISK_GIT" \
-  --slurpfile rows "$MERGED" \
-  '{date: $date, machine: $machine, macos: $macos, build: $build, arch: $arch, project: $project,
-    setup: $setup, replica: $replica, files: ($files | tonumber), packages: $pkgs,
-    base_build_secs: ($base_secs | tonumber), base_logical_kb: ($base_kb | tonumber),
-    disk_mb_per_clone: {git_clone_setup: ($dgit | tonumber), cp_clonefile: ($dcp | tonumber), replica_new: ($drep | tonumber)},
-    results: $rows[0]}' >"$JSON"
+# Base metadata: pidx base_secs base_logical_kb base_files setup
+base_meta = {}
+for line in open(meta_path):
+    parts = line.split()
+    if len(parts) >= 5:
+        pidx = parts[0]
+        base_meta[pidx] = {
+            "base_build_secs": float(parts[1]),
+            "base_logical_kb": int(parts[2]),
+            "base_files": int(parts[3]),
+            "setup": " ".join(parts[4:]),
+        }
 
-fmt() { python3 -c "print(f'{float(\"$1\"):.3f}')"; }
-row() {
-  # row NAME DISK_MB  (looks up the result by command name)
-  local name="$1" disk="$2"
-  jq -r --arg n "$name" --arg d "$disk" '
-    .results[] | select(.name == $n) |
-    "| \(.name) | \(.runs) | \(.mean * 1000 | round) | \(.median * 1000 | round) | \(.p95 * 1000 | round) | \(.min * 1000 | round)–\(.max * 1000 | round) | \($d) |"' "$JSON"
+# Start from any existing report (so repeated runs accumulate instead of overwrite).
+projects = {}
+concs = set()
+methods_seen = set()
+if os.path.exists(json_path):
+    try:
+        existing = json.load(open(json_path))
+        for pname, pdata in existing.get("projects", {}).items():
+            projects[pname] = {
+                "concurrency": {},
+                "base_build_secs": pdata.get("base_build_secs"),
+                "base_logical_kb": pdata.get("base_logical_kb"),
+                "base_files": pdata.get("base_files"),
+                "setup": pdata.get("setup"),
+            }
+            for cname, cdata in pdata.get("concurrency", {}).items():
+                projects[pname]["concurrency"][cname] = {
+                    "methods": dict(cdata.get("methods", {})),
+                }
+                concs.add(int(cname))
+        methods_seen.update(existing.get("methods", []))
+    except (json.JSONDecodeError, OSError):
+        pass
+
+for b in batches:
+    p = projects.setdefault(b["project"], {
+        "concurrency": {}, "base_build_secs": None,
+        "base_logical_kb": None, "base_files": None,
+        "setup": None,
+    })
+    concs.add(b["concurrency_level"])
+    methods_seen.add(b["method"])
+    c = p["concurrency"].setdefault(str(b["concurrency_level"]), {"methods": {}})
+    c["methods"][b["method"]] = b
+    # attach base meta (project-N maps to pidx = N-1)
+    try:
+        pidx = str(int(b["project"].split("-")[1]) - 1)
+    except (IndexError, ValueError):
+        pidx = "0"
+    if pidx in base_meta:
+        p.update(base_meta[pidx])
+
+report = {
+    "date": os.environ.get("DATE", ""),
+    "machine": os.environ.get("MACHINE", ""),
+    "macos": os.environ.get("MACOS", ""),
+    "build": os.environ.get("BUILD", ""),
+    "arch": os.environ.get("ARCH", ""),
+    "ncpu": int(os.environ.get("NCPU", "0")),
+    "load_start": float(os.environ.get("LOAD_START", "0")),
+    "load_end": float(os.environ.get("LOAD_END", "0")),
+    "replica": os.environ.get("REPLICA_VERSION", ""),
+    "methods": sorted(methods_seen),
+    "concurrency_levels": sorted(set(int(x) for x in concs)),
+    "projects": projects,
 }
+with open(json_path, "w") as f:
+    json.dump(report, f, indent=2)
+PY
 
 {
   echo "## Results: $DATE on $MACHINE, macOS $MACOS ($BUILD)"
   echo
-  echo "| Method | Runs | Mean (ms) | Median (ms) | P95 (ms) | Min–max (ms) | Extra disk per clone |"
-  echo "|---|---|---|---|---|---|---|"
-  row "shell baseline (true)" "–"
-  row "git clone + setup" "$(fmt "$DISK_GIT") MB (du)"
-  row "git worktree + setup" "n/a (shares the object store)"
-  row "cp -c -R of prebuilt base" "$(fmt "$DISK_CP") MB"
-  row "replica new" "$(fmt "$DISK_REPLICA") MB"
-  row "replica rm" "–"
-  row "rm -rf of a cp -c clone" "–"
-  row "replica base refresh (no changes)" "–"
+  echo "| Project | Concurrency | Method | Batches | Median (ms) | P95 (ms) | Total wall (ms) | Disk delta (KB) |"
+  echo "|---|---|---|---|---|---|---|---|"
+  python3 - "$RAW/batches.jsonl" <<'PY'
+import json, sys
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line: continue
+    b = json.loads(line)
+    print(f"| {b['project']} | {b['concurrency']} | {b['method']} | {b['batches']} | "
+          f"{b['median_ms']:.1f} | {b['p95_ms']:.1f} | {b['total_wall_ms']:.1f} | {b['disk_delta_kb']} |")
+PY
   echo
-  echo "- Project: \`$PROJECT\` ($PKG_COUNT locked packages, $FILE_COUNT files after setup)"
-  echo "- Setup command: \`$SETUP_CMD\`"
-  echo "- Base build (one time, not in the table): ${BASE_SECS}s"
-  echo "- Replica: $REPLICA_VERSION at \`$REPLICA_PATH\`"
+  echo "- Concurrency levels: ${CONCS[*]}"
+  echo "- Methods: ${METHODS_SEL[*]}"
   echo "- Machine: $MACHINE, macOS $MACOS ($BUILD), $ARCH, $NCPU cores"
   echo "- Load average (1 min): $LOAD_START at start, $LOAD_END at end"
-  echo "- Scratch volume: APFS, same volume for source, base, and workspaces"
-  echo "- Methodology: hyperfine, untimed prepare and cleanup per run, npm cache warmed,"
-  echo "  git clones from a local path (no network), P95 nearest-rank over the runs"
-  echo "- Disk per clone: for clonefile methods, the change in volume used over $DISK_RUNS clones (df),"
-  echo "  so it counts the APFS metadata each clone adds. Data blocks are shared and not counted."
-  echo "  The git clone figure is du of one clone, because git copies data and nothing is shared."
-  echo "  Other writes on the volume during sampling can add noise, so expect roughly +/- 0.5 MB."
+  echo "- Replica: $REPLICA_VERSION"
+  echo "- Scratch volume: APFS; source, base, and workspaces share one volume"
+  echo "- Methodology: untimed warmup batches per method, P95 nearest-rank over"
+  echo "  all individual iterations, disk delta via df on the replica volume,"
+  echo "  memory pressure sampled before/after (context only)."
+  echo "  Git clones are from a local copy (no network time)."
+  echo
+  echo "Base build (one-time, per project):"
+  while read -r pidx base_secs base_logical_kb base_files setup; do
+    echo "- project-$((pidx + 1)): ${base_secs}s ($base_files files, ${base_logical_kb} KB), setup: $setup"
+  done <"$RAW/base-meta.txt"
+  echo
+  echo "Full machine-readable report: $JSON"
 } >"$MD"
 
 cat "$MD"
