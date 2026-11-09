@@ -2,168 +2,183 @@
 
 # Isolated replicas of your workspace for AI agents
 
-**Isolated, fully installed workspace replicas for every AI agent, in milliseconds. Copy-on-write shares the data, so each workspace adds only metadata, and automatic cleanup keeps the total bounded.**
+**Replica gives every agent run its own fully installed copy of your project, created in milliseconds with APFS copy-on-write. Each copy is a real git checkout, and automatic cleanup keeps total disk use bounded.**
 
-| | Median | vs `git clone` + `npm ci` |
-|---|---|---|
-| `git clone` + setup | 3.10s | 1x |
-| `git worktree` + setup | 2.51s | 1.2x |
-| **`replica new`** | **66ms** | **47x faster** |
+```sh
+cd "$(replica new --ttl 2h --name fix-login)"   # a ready workspace; the path goes to stdout
+git checkout -b agent/fix-login && git commit -am "fix login" && git push -u origin agent/fix-login
+replica rm <id>                                 # done; or let the TTL expire
+```
 
-*Previous recorded run (2026-10-25, arm64 macOS 26.6.2). A re-run of the current suite is pending. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for methodology and corrections.*
+## Why
 
-## How it works
+Creating files is one of the slowest things macOS does. An agent run creates thousands of them (a checkout, `node_modules`, build output), and a fresh install takes seconds to minutes before the agent does any work.
 
-Creating and deleting files is one of the slowest things macOS does, and agent runs create tens of thousands of them: checkouts, `node_modules`, build output.
+Replica builds a **base** once: a git clone with its dependencies installed. Each `replica new` clones that base with one `clonefile(2)` call. The data blocks stay shared with the base until a file changes, so the new workspace is ready almost at once.
 
-Replica skips that work. You build a "golden" base tree once, with dependencies installed. Each `replica new` then clones it with APFS `clonefile(2)`. A clone copies no data blocks: blocks stay shared until an agent modifies a file. It does write APFS metadata for every file, about 1.4 MB for a 1,700-file project, so a workspace is cheap rather than free.
+## What you get
 
-To keep clones from piling up, Replica expires them by TTL, evicts the least recently used ones, and can enforce a byte cap. It also gives each workspace its own `TMPDIR` and cleans it up.
+- **Fast workspaces.** A clone of a 1,700-file project takes tens of milliseconds, against seconds for `git clone` plus an install. [Numbers and methodology](docs/BENCHMARKS.md).
+- **Real git.** Each workspace is a full git checkout. It can branch, commit, and push, and the base stays untouched. [Details below](#git-branch-commit-and-push-from-a-workspace).
+- **Bounded disk.** TTL expiry, least-recently-used eviction, a byte cap, and an optional dedicated APFS volume with a quota.
+- **Cheap updates.** `replica base refresh` brings the base up to date with its remote without a full rebuild. [Details below](#keeping-the-base-fresh).
+- **Agent-ready.** A stable CLI with `--json` output, documented exit codes, and skills for Claude Code, Cursor, and the skills.sh CLI.
 
 ## Requirements
 
-- macOS on an APFS volume
-- Rust toolchain ([rustup](https://rustup.rs)) to build from source
-- The base tree and its clones must live on the **same APFS volume**
+- macOS on an APFS volume. Replica uses `clonefile(2)`, which Linux does not provide. Tested on macOS 26.6 (Apple M1 Max).
+- The base tree and every workspace must be on the **same APFS volume**. Clones cannot cross volumes, and Replica refuses rather than silently copying.
 
 ## Install
 
-Homebrew (available once the first release is published; see [skills/replica-release](skills/replica-release/SKILL.md)):
+Binaries are published for macOS on Apple Silicon (`arm64`) and Intel (`x86_64`). A universal binary covers both.
 
 ```sh
-brew tap gabrielvfonseca/tap
-brew install replica
-```
+# Homebrew (after the first release is published)
+brew tap gabrielvfonseca/tap && brew install replica
 
-From source:
+# Installer script: verifies the download against sha256sums.txt
+curl -fsSL https://raw.githubusercontent.com/gabrielvfonseca/replica/main/scripts/get-replica.sh | sh
 
-```sh
-git clone https://github.com/gabrielvfonseca/replica.git
-cd replica
-make release
-PREFIX=$HOME/.local make install
+# From source (needs a Rust toolchain, https://rustup.rs)
+git clone https://github.com/gabrielvfonseca/replica.git && cd replica
+make release && PREFIX=$HOME/.local make install
 ```
 
 Run `replica help` for a guided overview, or `replica help quickstart` to get started.
 
-To also run `replica gc` automatically every 10 minutes through launchd:
-
-```sh
-INSTALL_LAUNCHD=1 REPLICA_ROOT=/Volumes/Work/replica make install
-```
-
 ## Quick start
 
-### 1. Choose where workspaces live
-
-**Recommended: a dedicated APFS volume with a quota.** Clones can never fill your main disk.
+**1. Choose a volume.** A dedicated APFS volume with a quota is the safest setup, because clones can never fill your main disk.
 
 ```sh
 diskutil apfs list                                   # find your APFS container
-diskutil apfs addVolume <container> APFS Work -quota 100g
+./scripts/setup-volume.sh disk3 100g Work            # creates /Volumes/Work, turns off Spotlight indexing there
 export REPLICA_ROOT=/Volumes/Work/replica
 ```
 
-Or use the helper script: `./scripts/setup-volume.sh <container> 100g Work`
+Any APFS directory works too. Add `REPLICA_MAX_BYTES` to cap its size. See [DISK_SAFETY](docs/DISK_SAFETY.md) for the trade-offs.
 
-**Alternative: any APFS volume with a byte cap.**
-
-```sh
-export REPLICA_ROOT=$HOME/replica
-export REPLICA_MAX_BYTES=50000000000                 # 50 GB
-```
-
-See [docs/DISK_SAFETY.md](docs/DISK_SAFETY.md) for the trade-offs.
-
-### 2. Build a base
+**2. Build a base once.**
 
 ```sh
 replica base build --repo https://github.com/you/proj.git --setup "npm ci"
-replica base check                                   # flag path-dependent build output
+replica base check                                   # find build output that breaks when cloned
 ```
 
-### 3. Create and manage workspaces
+**3. Create, use, and remove workspaces.**
 
 ```sh
-cd "$(replica new --ttl 2h --name fix-login)"   # path on stdout; status on stderr
-replica list                                    # table; add --json for scripts
-eval "$(replica env <id>)"                      # TMPDIR and shared caches
-replica touch <id>                              # keep a long session out of LRU eviction
-replica rm <id>                                 # remove one (idempotent)
-replica gc                                      # expire and evict old workspaces
-replica stats                                   # real volume usage
-replica base refresh                            # rebuild the base with its original repo and setup
+cd "$(replica new --ttl 4h --name feature-x)"        # path on stdout, status on stderr
+eval "$(replica env <id>)"                           # per-workspace TMPDIR and shared caches
+replica touch <id>                                   # keep a long session out of LRU eviction
+replica list                                         # table; add --json for scripts
+replica rm <id>                                      # remove one (idempotent)
 ```
 
-Run `replica help` for the guide, or `replica <command> --help` for one command. Exit codes are listed in [docs/CLI.md](docs/CLI.md#exit-codes).
-
-### 4. Give your coding agents the skill
-
-The skills in [`skills/`](skills/) follow the SKILL.md format. Install them with the skills.sh CLI:
+**4. Give your agents the skill.**
 
 ```sh
-npx skills add gabrielvfonseca/replica            # all skills
+npx skills add gabrielvfonseca/replica               # skills.sh CLI: all six skills
+replica setup --dry-run                              # see what setup would write for Claude Code, Cursor, Copilot, Zed, Aider
+replica setup                                        # write it
 ```
 
-`replica setup` also detects Claude Code, Cursor, Copilot, Zed, and Aider on your machine and writes each one its configuration.
+## Git: branch, commit, and push from a workspace
 
-## Replica vs. git worktree
+Yes. A workspace is a complete git repository, not a read-only copy:
 
-| | git worktree | Replica |
+| Operation | In a workspace | Effect on the base |
 |---|---|---|
-| Setup | Run `npm ci` / `cargo build` in every worktree | Dependencies already installed in the base |
-| Disk usage | Full copy of files and dependencies | Shared data blocks; each clone adds APFS metadata, and only changed files use new space |
-| Isolation | Full | Full (copy-on-write) |
-| Disk limits | None, can fill your disk | TTL, LRU eviction, optional byte cap |
-| Temp files | Manual cleanup | Per-workspace `TMPDIR`, cleaned up automatically |
-| Base updates | n/a | Rebuild, then swap; existing clones unaffected |
+| `git checkout -b`, `git commit` | Works. Commits live in the workspace's `.git` | None |
+| `git push origin <branch>` | Works, to the remote the base was built from | None |
+| `git pull`, `git fetch` | Works | None |
+| `git status`, `git diff` | Works | None |
+
+Things to know:
+
+- **Remote credentials.** `push` uses whatever credentials git uses on this machine (SSH keys, a credential helper). Replica does not add or store any.
+- **The remote is the one you built from.** `origin` in a workspace is the `--repo` you passed to `base build`. If that is a local path, pushes go to that path.
+- **Workspaces are independent.** Two workspaces on the same branch will conflict on push, the same as two clones would. Use one branch per workspace.
+- **Verified.** `tests/git_workspace.rs` builds a base from a bare repo, commits and pushes from a workspace, and checks that the origin and the base are as expected.
+
+For agents that open pull requests, the flow is: `replica new`, work and commit on a branch, push, open the PR with `gh pr create`, then `replica rm`.
+
+## Keeping the base fresh
+
+When the remote moves on, `replica base refresh` updates the base. It does not rebuild from scratch:
+
+1. Clonefiles the current base. This copies metadata only, so it is quick and uses almost no extra disk.
+2. Runs `git fetch` and resets the copy to `origin/HEAD`. Only files that changed upstream are rewritten.
+3. Re-runs setup **only if a lockfile changed**. If none did, setup is skipped entirely.
+4. Swaps the new base in. Existing workspaces are unaffected, because each one owns its blocks.
+
+So an upstream commit that does not touch dependencies costs a fetch and a checkout. A lockfile change costs about as much as the setup command itself. If the fast path fails for any reason, refresh falls back to a full rebuild.
+
+Check freshness with `replica base status`, and use `replica new --require-fresh` to refuse a stale base. The timing of the fast path is measured in the [benchmark suite](benchmarks/README.md); the results will appear in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+## Disk usage: what a workspace really costs
+
+- **At creation**, a workspace adds APFS metadata for every file and directory it contains. For the benchmark fixture (about 1,700 files) that is about 1.4 MB. Data blocks are shared with the base.
+- **After the agent works**, every file it changes takes real space, because APFS copies the blocks that change. Rewriting 500 MB of build output costs 500 MB, and so does a `npm rebuild` that rewrites `node_modules`.
+- **Deleting** a workspace frees only the blocks no other file shares. A fresh workspace frees little, and a heavily changed one frees much more.
+
+This is why the TTL, LRU eviction, and byte cap exist. [DISK_SAFETY](docs/DISK_SAFETY.md) explains each one.
+
+Spotlight can also add writes on a busy volume. `scripts/setup-volume.sh` turns indexing off for the dedicated volume only (it needs `sudo`). We have not yet measured how much that changes benchmark results.
 
 ## Limitations
 
-**Path-dependent build output.** Some tools hardcode absolute paths: Python venvs, `node_modules/.bin` scripts, Cargo fingerprints, TypeScript `.tsbuildinfo`. These break when cloned. Run `replica base check` to find them, then fix them with `--post-clone` hooks or regenerate them after cloning. See [`replica base check`](docs/CLI.md#replica-base-check) and the [replica-base skill](skills/replica-base/SKILL.md).
-
-**What Replica doesn't do:**
-
-- Speed up reads or writes inside a running agent
-- Fix Spotlight, XProtect, or Docker bind-mount overhead
-- Clone across volumes (source and target must share one APFS volume)
+- **Path-dependent build output.** Some tools write absolute paths into their output: Python venvs, `node_modules/.bin` scripts, Cargo fingerprints, TypeScript `.tsbuildinfo`. These break in a clone. Run `replica base check` to find them, then fix them with `--post-clone` or by regenerating them. See the [replica-base skill](skills/replica-base/SKILL.md).
+- **Cost scales with file count.** Each clone writes metadata for every file. Replica is much faster than copying or cloning file by file, but it is not free, and very large trees (hundreds of thousands of files) have not been measured.
+- **Same volume only.** Source, base, and workspaces must share one APFS volume.
+- **Not a speedup inside a running agent.** Replica makes workspace creation fast. It does not speed up reads or writes during a run, nor does it fix Spotlight or XProtect scanning.
+- **macOS only.** Linux and Windows are out of scope.
 
 ## Benchmarks
 
-The suite in [`benchmarks/`](benchmarks/README.md) compares `replica new` with `git clone` + install, `git worktree` + install, and `cp -c`, and it measures disk per clone.
+Measured with [`benchmarks/`](benchmarks/README.md), which uses hyperfine and untimed setup and cleanup for every run.
 
-```sh
-make bench                                         # bundled fixture project (~12 min)
-make bench PROJECT=~/code/app SETUP="npm ci" RUNS=30
-```
+The last recorded run is from 2026-10-25 on an Apple M1 Max, macOS 26.6.2, with a 1,842-file npm project. Its numbers are kept, with corrections, in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-The last recorded run (2026-10-25, arm64 macOS 26.6.2, 1,842 files) is in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), together with the corrections to it. A re-run of the current suite is pending. Replica adds about 1.4 MB of APFS metadata per clone for a 1,700-file project. Data blocks are shared, so that is the whole cost.
+| Method | Median | Notes |
+|---|---|---|
+| `git clone` + `npm ci` | 3.10 s | Clones a local path, so network time is excluded |
+| `git worktree` + `npm ci` | 2.51 s | Reuses the repo's object store |
+| `cp -c -R` of a built tree | 1.33 s | One clonefile per file, walked by `cp` |
+| **`replica new`** | **66 ms** | One `clonefile(2)` call on the directory |
+
+- **Why `replica new` is about 20x faster than `cp -c`.** `replica` makes one `clonefile(2)` call on the workspace directory, and the kernel clones the whole hierarchy. `cp -c -R` walks the tree in user space and clones file by file, so its time grows with the file count. This explains the gap we measured. We have not captured a syscall trace to confirm the split.
+- **The project is thousands of files, not tens of thousands.** The fixture has 1,842 files. Larger trees are expected to cost more, because metadata grows with file count, but that has not been measured.
+- **The old `replica rm` row is not a removal benchmark.** It timed `gc --dry-run`, `list`, and up to five removals together. Its 721 ms P95 fits that mixed command, which includes several removals and a gc scan, so it does not describe one `rm`. We have not profiled it to confirm the cause. The current suite times a single `replica rm` against `rm -rf` of a clone.
+
+The current suite has not yet produced a run on an idle machine. It refuses to run when the 1-minute load average is above a quarter of the cores, so results are only recorded when the machine is quiet. Run `make bench` to record one.
 
 ## Development
 
 ```sh
-make help                 # every target
-make check                # fmt + clippy + tests (what CI runs)
-make bench                # benchmark suite
-make skills-check         # validate skills/*/SKILL.md
+make help              # every target
+make check             # fmt, clippy (warnings are errors), and tests; what CI runs
+make bench             # benchmark suite
+make dist              # release binaries in bin/
 ```
 
-CI runs on GitHub Actions macOS runners. See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved, and [AGENTS.md](AGENTS.md) for instructions aimed at coding agents working on this repo.
+CI runs on GitHub Actions macOS runners. [CONTRIBUTING.md](CONTRIBUTING.md) covers the workflow, and [AGENTS.md](AGENTS.md) holds the rules for coding agents. The [replica-dev skill](skills/replica-dev/SKILL.md) describes the code layout.
 
 ## Docs
 
 | | |
 |---|---|
+| [CLI](docs/CLI.md) | Every command, flag, output, and exit code |
 | [SPEC](docs/SPEC.md) | Problem, goals, non-goals, requirements |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | Components, layout, flows |
-| [CLI](docs/CLI.md) | Command reference |
-| [DATA_MODEL](docs/DATA_MODEL.md) | SQLite schema, state machine |
-| [DISK_SAFETY](docs/DISK_SAFETY.md) | Quotas, GC, caches, temp dirs |
-| [BENCHMARKS](docs/BENCHMARKS.md) | Methodology, results, corrections |
-| [benchmarks/](benchmarks/README.md) | Benchmark suite and fixture project |
-| [skills/](skills/) | Agent skills: usage, base, maintenance, development, benchmarks, release |
-| [ROADMAP](docs/ROADMAP.md) | Phases and open questions |
-| [CHANGELOG](CHANGELOG.md) | Notable changes |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | Components, layout, and flows |
+| [DATA_MODEL](docs/DATA_MODEL.md) | SQLite schema, state machine, migrations |
+| [DISK_SAFETY](docs/DISK_SAFETY.md) | Quotas, TTL, eviction, caches, and what deleting frees |
+| [BENCHMARKS](docs/BENCHMARKS.md) | Methodology, results, and corrections |
+| [benchmarks/](benchmarks/README.md) | The benchmark suite and fixture project |
+| [skills/](skills/README.md) | Agent skills: usage, base, maintenance, development, benchmarks, release |
+| [ROADMAP](docs/ROADMAP.md) | Shipped work, next steps, open questions |
+| [CHANGELOG](CHANGELOG.md) | Notable changes by version |
 
 ## License
 
