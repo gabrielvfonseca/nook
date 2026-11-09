@@ -8,10 +8,10 @@ class Replica < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/gabrielvfonseca/replica/releases/download/v#{version}/replica-darwin-arm64"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "32ef76040e9035b9fdac6e87e7409b9c14a02952d3aecc4460084679ea84bb74"
     else
       url "https://github.com/gabrielvfonseca/replica/releases/download/v#{version}/replica-darwin-x86_64"
-      sha256 "1111111111111111111111111111111111111111111111111111111111111111"
+      sha256 "d4dc3fc21428af346b7602dc1ccc9634ca164908ec610eb1a81d2c08070359a6"
     end
   end
 
