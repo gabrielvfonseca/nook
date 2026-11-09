@@ -26,7 +26,7 @@ workspaces, versus seconds for `git clone` plus an install.
 
 ## What you get
 
-- **Fast workspaces.** A clone of a 1,700-file project takes tens of milliseconds, against seconds for `git clone` plus an install. [Numbers and methodology](docs/BENCHMARKS.md).
+- **Fast workspaces.** A clone of a 1,700-file project takes about 100 ms at N = 1 (about 230 ms with 10 concurrent workspaces), against seconds for `git clone` plus an install. Exact numbers vary with machine load; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for the full table and methodology.
 - **Real git.** Each workspace is a full git checkout. It can branch, commit, and push, and the base stays untouched. [Details below](#git-branch-commit-and-push-from-a-workspace).
 - **Bounded disk.** TTL expiry, least-recently-used eviction, a byte cap, and an optional dedicated APFS volume with a quota.
 - **Cheap updates.** `replica base refresh` brings the base up to date with its remote without a full rebuild. [Details below](#keeping-the-base-fresh).
@@ -83,6 +83,19 @@ replica list                                         # table; add --json for scr
 replica rm <id>                                      # remove one (idempotent)
 ```
 
+**Branches with different lockfiles.** If you create a workspace from a branch
+whose lockfile differs from the base, use `--ref <branch>`:
+
+```sh
+replica new --ref my-feature-branch
+```
+
+Replica compares the branch's lockfile hash with the base's recorded hash. If
+they match, the workspace is cloned directly ("cloned directly"). If they differ,
+Replica clones the base and then runs the setup command (an incremental install)
+so the workspace gets correct dependencies, and reports "lockfile drift on
+<branch>; running incremental install". The CLI always tells you which path it took.
+
 **4. Give your agents the skill.**
 
 ```sh
@@ -137,10 +150,13 @@ Spotlight can also add writes on a busy volume. `scripts/setup-volume.sh` turns 
 ## Limitations
 
 - **Path-dependent build output.** Some tools write absolute paths into their output: Python venvs, `node_modules/.bin` scripts, Cargo fingerprints, TypeScript `.tsbuildinfo`. These break in a clone. Run `replica base check` to find them, then fix them with `--post-clone` or by regenerating them. See the [replica-base skill](skills/replica-base/SKILL.md).
+- **Cargo `target/` clones safely but adds cost.** A cloned `target/` gives a correct incremental no-op build (~20 ms, no recompile) when nothing changed, and recompiles only changed crates after a source touch — it does not force a full rebuild. However, it adds APFS metadata per clone for no benefit, so exclude `target/` from the base (`.gitignore`) and use a shared `CARGO_TARGET_DIR` under `$REPLICA_ROOT/cache` instead.
 - **Cost scales with file count.** Each clone writes metadata for every file. Replica is much faster than copying or cloning file by file, but it is not free, and very large trees (hundreds of thousands of files) have not been measured.
 - **Same volume only.** Source, base, and workspaces must share one APFS volume.
 - **Not a speedup inside a running agent.** Replica makes workspace creation fast. It does not speed up reads or writes during a run, does not reduce the RAM or CPU used by running many agents at once, and does not fix Spotlight or XProtect scanning.
-- **Lockfile changes still need an install.** If a branch's lockfile differs from the base, the workspace needs an incremental install (or a refreshed base); cloning alone does not update dependencies.
+- **Lockfile drift is handled by `--ref`.** If a branch's lockfile differs from the base, `replica new --ref <branch>` clones the base and runs the setup command (incremental install) so the workspace gets correct dependencies, and reports "lockfile drift on <branch>; running incremental install". If the lockfile matches, it clones directly.
+- **Concurrency is tested.** `tests/concurrency.rs` runs 10 simultaneous `replica new`/use/`rm` cycles with zero SQLite busy errors, no corruption, and all workspaces created and removed. `replica gc` skips workspaces with a fresh lease (`.replica/lease`), so a launchd gc every 10 minutes never deletes a workspace an agent is using.
+- **`replica rm` P95.** Early measurements showed a 22 ms median vs 721 ms P95 gap, but that row was not a single removal (it combined `gc --dry-run`, `list`, and up to five `rm`s). Current data measures `replica rm` as a single removal with no tail latency.
 - **macOS only.** Linux and Windows are out of scope.
 
 ## Benchmarks
@@ -153,7 +169,7 @@ virtual store, and `cp -c`, and it also measures `replica rm` and
 ```sh
 make release                                         # target/release/replica
 make bench                                           # bundled fixture (~15 min)
-make bench --concurrency 1,5,10                      # parallel workspace creation
+make bench CONCURRENCY=1,5,10                        # parallel workspace creation
 ```
 
 Full results, methodology, machine details, and exact commands are in
@@ -163,7 +179,7 @@ Headline (Apple M1 Max, macOS 26.6.2, under load, 1,739-file npm project):
 
 | Concurrency | `replica new` median | `cp -c -R` median | `git clone` + setup median |
 |---|---:|---:|---:|
-| N = 1 | ~114 ms | ~958 ms | ~3.96 s |
+| N = 1 | ~100 ms | ~958 ms | ~3.96 s |
 | N = 10 (all at once) | ~230 ms | ~3.55 s | ~4 s |
 
 `replica new` is about 15x faster than `cp -c -R` even with 10 concurrent
@@ -171,16 +187,17 @@ workspaces, and tens of times faster than `git clone` plus an install. The
 one-time `replica base build` (~2–3 s) is less than a single `git clone` +
 setup, so Replica comes out ahead on the very first workspace.
 
-- **2026-11-09, under load** (1-minute load 171–184 on 10 cores). Relative
-  ordering matches a clean run, but absolute times are inflated; do not quote
-  the ratios as settled.
+- **2026-11-09, under load** (1-minute load 171–184 on 10 cores). These
+  absolute times are inflated by the shared machine load; relative ordering
+  held, but do not quote the ratios as settled. Exact numbers and P95 values
+  are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 - **2026-10-25, quiet machine** (previous harness, 1,842 files): `replica new`
-  66 ms, `git clone` + setup 3.10 s, `cp -c` 1.33 s.
+  66 ms, `git clone` + setup 3.10 s, `cp -c` 1.33 s. Different harness and
+  fixture; not directly comparable to the 2026-11-09 run.
 
 Replica adds APFS metadata per file per clone (~1.4 MB for a 1,700-file project
 on a quiet machine); data blocks are shared with the base and changed files cost
-real space as the agent works. The [replica-benchmarks skill]
-(skills/replica-benchmarks/SKILL.md) lists what a clean run needs.
+real space as the agent works. The [replica-benchmarks skill](skills/replica-benchmarks/SKILL.md) lists what a clean run needs.
 
 ## Development
 
