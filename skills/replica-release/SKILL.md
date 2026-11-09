@@ -1,13 +1,14 @@
 ---
 name: replica-release
-description: Cut a Replica release. Covers the version bump, CHANGELOG, building bin/ for both macOS architectures, tagging vX.Y.Z, publishing the GitHub release with binaries and sha256sums.txt, and updating the Homebrew formula in homebrew/ (which is the tap, inside this repository). Use when preparing a version, running scripts/release.sh, editing the formula, or when a user asks how to install Replica with Homebrew.
+description: Cut a Replica release. Covers the version bump, CHANGELOG, building bin/ for both macOS architectures, tagging vX.Y.Z, and publishing the GitHub release with binaries and sha256sums.txt via scripts/release.sh. Use when preparing a version or running the release script. Homebrew is out of scope for now (see HOMEBREW.md).
 ---
 
-# Replica release and Homebrew
+# Replica release
 
-The formula is `homebrew/Formula/replica.rb`. It is not installable with
-`brew` yet: Homebrew needs a tap with `Formula/` at a repository root, and this
-repository has none by design. See `homebrew/README.md` for the options.
+A release is a git tag plus a GitHub release with three binaries and
+`sha256sums.txt`. The installer script (`scripts/get-replica.sh`) downloads from
+the latest release and checks the checksum. Homebrew is not part of the release
+yet; see `HOMEBREW.md`.
 
 ## Steps
 
@@ -25,26 +26,24 @@ repository has none by design. See `homebrew/README.md` for the options.
    ```sh
    scripts/release.sh X.Y.Z --apply
    ```
-   This creates annotated tag `vX.Y.Z`, pushes it, creates the GitHub release with the
-   CHANGELOG notes and the `bin/` artifacts plus `sha256sums.txt`, and writes the
-   checksums into `homebrew/Formula/replica.rb`. Those checksums come from the same
-   local artifacts that were uploaded.
-6. **Commit the formula** to `main` (PR), so `brew` users get the new checksums.
-7. **Verify** from a clean shell:
+   This creates annotated tag `vX.Y.Z`, pushes it, and creates the GitHub release
+   with the CHANGELOG notes and the `bin/` artifacts plus `sha256sums.txt`.
+6. **Verify** from a clean shell:
    ```sh
-   # brew: not available until a tap layout is chosen (see homebrew/README.md)
-   replica --version && replica help
+   PREFIX=$(mktemp -d) sh scripts/get-replica.sh
+   "$PREFIX/bin/replica" --version && "$PREFIX/bin/replica" help
    ```
 
-## Formula details
+## Details
 
-- Stable installs the prebuilt binary for the machine's architecture. `--HEAD` builds from `main` with `cargo install`.
-- `service` runs `replica gc` every 600 seconds. It uses `REPLICA_ROOT=$HOME/replica`, because launchd does not read the shell profile.
-- `test do` checks `replica --version` and that `replica help` prints `USAGE`.
-- `license "Apache-2.0"` matches `Cargo.toml`.
+- `bin/replica-darwin-arm64`, `bin/replica-darwin-x86_64`, and
+  `bin/replica-darwin-universal` come from `make dist`. The release uploads all
+  three, so the installer can pick either architecture.
+- `make dist` needs rustup's cargo on `PATH` to build the x86_64 target. Use
+  `PATH=$HOME/.cargo/bin:$PATH` if Homebrew's cargo is first.
 
 ## Troubleshooting
 
-- **Tag already exists**: pick the next version, or delete the local and remote tag only after confirming nobody installed it.
+- **Tag already exists**: pick the next version. Do not delete a published tag.
 - **Dirty tree**: commit or stash. The script will not publish from uncommitted state.
-- **`replica setup --homebrew`** writes a local formula to `~/homebrew/replica.rb` with placeholder checksums. Prefer the tap for installs.
+- **Checksum mismatch in the installer**: the release assets changed after `sha256sums.txt` was made. Cut a new version.

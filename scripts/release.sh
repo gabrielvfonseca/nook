@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Cut a release: build the binaries, tag, publish a GitHub release, and update the Homebrew tap.
+# Cut a release: build the binaries, tag, and publish a GitHub release. (Homebrew is not included; see HOMEBREW.md.)
 #
 #   scripts/release.sh 0.1.0           dry run: checks everything, builds bin/, writes nothing else
-#   scripts/release.sh 0.1.0 --apply   tag vX.Y.Z, push it, create the GitHub release, update the tap
+#   scripts/release.sh 0.1.0 --apply   tag vX.Y.Z, push it, create the GitHub release
 #
-# The formula's sha256 values come from the local bin/ artifacts, which are the exact files
-# uploaded to the release. Nothing is taken from GitHub's generated source tarball.
-#
-# Environment:
-#   TAP_DIR   path to the Homebrew formula directory (default: homebrew/ in this repo)
+# The checksums in bin/sha256sums.txt are computed from the exact files uploaded to the release.
 set -euo pipefail
 
 usage() {
@@ -30,8 +26,6 @@ done
 
 TAG="v$VERSION"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MAIN_REPO="$(dirname "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)")"
-TAP_DIR="${TAP_DIR:-$MAIN_REPO/homebrew}"
 NOTES="$(mktemp "${TMPDIR:-/tmp}/replica-notes.XXXXXX")"
 trap 'rm -f "$NOTES"' EXIT
 
@@ -79,7 +73,6 @@ echo "  commit:     $(git rev-parse --short HEAD)"
 echo "  artifacts:"
 sed 's/^/    /' bin/sha256sums.txt
 echo "  notes:      $(wc -l < "$NOTES" | tr -d ' ') lines from CHANGELOG.md"
-echo "  tap:        $TAP_DIR/Formula/replica.rb"
 
 if [[ "$APPLY" -ne 1 ]]; then
   echo
@@ -90,7 +83,6 @@ fi
 
 # ---- apply ------------------------------------------------------------------
 
-[[ -d "$TAP_DIR/Formula" ]] || fail "tap not found at $TAP_DIR (set TAP_DIR)"
 gh auth status >/dev/null 2>&1 || fail "gh is not logged in"
 
 echo "== tagging and pushing $TAG"
@@ -102,30 +94,3 @@ gh release create "$TAG" \
   --title "replica $VERSION" \
   --notes-file "$NOTES" \
   bin/replica-darwin-arm64 bin/replica-darwin-x86_64 bin/replica-darwin-universal bin/sha256sums.txt
-
-echo "== updating tap formula"
-SHA_ARM="$(awk '$2 == "replica-darwin-arm64" {print $1}' bin/sha256sums.txt)"
-SHA_INTEL="$(awk '$2 == "replica-darwin-x86_64" {print $1}' bin/sha256sums.txt)"
-[[ -n "$SHA_ARM" && -n "$SHA_INTEL" ]] || fail "could not read checksums from bin/sha256sums.txt"
-python3 - "$TAP_DIR/Formula/replica.rb" "$VERSION" "$SHA_ARM" "$SHA_INTEL" <<'PY'
-import re, sys
-path, version, sha_arm, sha_intel = sys.argv[1:]
-text = open(path).read()
-text, n = re.subn(r'version "[^"]*"', f'version "{version}"', text, count=1)
-assert n == 1, "formula has no version line"
-# The on_macos block lists the arm64 checksum first, then x86_64.
-shas = list(re.finditer(r'sha256 "[^"]*"', text))
-assert len(shas) == 2, f"expected two sha256 lines, found {len(shas)}"
-text = (text[:shas[0].start()] + f'sha256 "{sha_arm}"'
-        + text[shas[0].end():shas[1].start()] + f'sha256 "{sha_intel}"'
-        + text[shas[1].end():])
-open(path, "w").write(text)
-PY
-ruby -c "$TAP_DIR/Formula/replica.rb" >/dev/null
-echo "wrote $TAP_DIR/Formula/replica.rb"
-cat <<EOF
-
-Next (the tap is this repository, under homebrew/):
-  git add homebrew/Formula/replica.rb && git commit -m "Homebrew formula for replica $VERSION"
-  git push origin main   # or open a PR, as usual
-EOF

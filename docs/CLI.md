@@ -201,7 +201,7 @@ Two kinds of config are written:
 |---|---|
 | `--dry-run` | Show what would be written. Write nothing. |
 | `--force` | Replace existing replaced-type configs (Cursor, Zed). The original is always backed up first, as `<name>.bak`. |
-| `--homebrew` | Also write a local formula to `~/homebrew/replica.rb`. See the release skill: the formula has placeholder checksums. |
+| `--homebrew` | Also write a local formula to `~/homebrew/replica.rb`. The formula has placeholder checksums and is not a supported install path; see HOMEBREW.md. |
 | `--config` | Read custom agents from a TOML file (default `~/.config/replica/agents.toml`). |
 
 Custom agents use the same schema as the built-ins:
