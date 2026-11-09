@@ -12,6 +12,8 @@ how to publish it without drifting.
 
 ## Run
 
+A clean run needs an idle machine. The harness refuses to start above a quarter of the cores in 1-minute load; `--allow-busy` overrides that and must be stated with any numbers published.
+
 ```sh
 make release
 make bench                                        # fixture project, 20 runs (10 for installs)

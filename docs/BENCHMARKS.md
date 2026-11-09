@@ -10,11 +10,14 @@ recorded run.
 
 | | |
 |---|---|
-| Suite | `benchmarks/run.sh`, with rows for every method plus `replica base refresh` |
-| Latest valid run | 2026-10-25, arm64 macOS 26.6.2, **made with the previous harness**. Kept below, with corrections |
-| Pending | A run of the current suite. It refuses to start while the 1-minute load average is above a quarter of the cores. On 2026-11-09 the load was 60 to 150, from long-running agent sessions (`kilo`, `opencode`) on the same machine. Those timings were discarded. |
+| Suite | `benchmarks/run.sh`: every method, plus `replica base refresh` |
+| Latest run | 2026-11-09, **under heavy background load** (1-minute load 171 at start, 184 at end, on 10 cores). Run with `--allow-busy`. Treat the absolute times as inflated and the disk figures as noisy. |
+| Clean reference | 2026-10-25, previous harness, measured on a quiet machine. Kept below, with corrections. |
 
-To publish the current suite: close other heavy work, check `uptime`, then run `make bench`. The harness records the load average at start and end in its report, so a run can be checked afterwards.
+The harness refuses to start while the 1-minute load exceeds a quarter of the
+cores. The 2026-11-09 run overrode that guard on purpose, and its report records
+the load so the caveat travels with the numbers. A clean run needs an idle
+machine: close other heavy work, then `make bench`.
 
 ## Methodology
 
@@ -68,7 +71,32 @@ The 2026-10-25 run used an earlier harness. Four things need correcting:
 
 ## Results
 
-### 2026-10-25 on arm64 macOS 26.6.2 (25G83), previous harness, superseded in part
+### 2026-11-09 on Apple M1 Max, macOS 26.6.2 (25G83), **under load**
+
+Load: 1-minute average 171 at start and 184 at end on 10 cores. Other user
+sessions were running. Source: `benchmarks/results/2026-11-09-arm64-macos26.6.2.{md,json}`.
+Fixture: 39 locked packages, 1,739 files after setup, 11 MB installed.
+
+| Method | Runs | Median (ms) | P95 (ms) | Min–max (ms) | Extra disk per clone |
+|---|---|---|---|---|---|
+| shell baseline (`true`) | 20 | 0 | 8 | 0–14 | – |
+| git clone + setup | 10 | 3898 | 4904 | 3090–4904 | 11.5 MB (du, not shared) |
+| git worktree + setup | 10 | 3074 | 4073 | 2553–4073 | n/a (shares the object store) |
+| cp -c -R of prebuilt base | 20 | 1262 | 2080 | 1085–2108 | 7.9 MB (df, noisy) |
+| **replica new** | 20 | **78** | 135 | 62–167 | 2.2 MB (df, noisy) |
+| replica rm | 20 | 235 | 272 | 185–276 | – |
+| rm -rf of a cp -c clone | 20 | 398 | 486 | 361–514 | – |
+| replica base refresh (no changes) | 10 | 534 | 628 | 451–628 | – |
+
+What this run supports, with the load caveat:
+
+- Relative ordering held: `replica new` (78 ms) was the fastest creation method, ahead of `cp -c` (1,262 ms) and both git methods (about 3–4 s).
+- `replica rm` (235 ms) was faster than `rm -rf` of an equivalent clonefile copy (398 ms). The two were measured in the same conditions.
+- `replica base refresh` with no upstream changes took about half a second. It fetches and resets without re-running setup. This is the common case.
+- Under load every absolute number is larger than in the clean October run. Do not compare these times to the October table, and do not quote the ratios as settled.
+- Disk figures varied from the clean control. The 2026-11-09 control measured about 1.4 MB of metadata per clone with no load. Under this load the `df` deltas read 2.2 MB and 7.9 MB, which is noise from other writes on the volume. Use the clean control for the metadata cost.
+
+### 2026-10-25 on arm64 macOS 26.6.2 (25G83), previous harness, quiet machine, superseded in part
 
 Fixture: a 1,842-file npm project with 70 dependencies, on a 1 TB APFS volume.
 Runs: 3 per method. Corrections above apply to the `replica rm` row and the disk column.

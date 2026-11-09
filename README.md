@@ -137,22 +137,29 @@ Spotlight can also add writes on a busy volume. `scripts/setup-volume.sh` turns 
 
 ## Benchmarks
 
-Measured with [`benchmarks/`](benchmarks/README.md), which uses hyperfine and untimed setup and cleanup for every run.
+The suite in [`benchmarks/`](benchmarks/README.md) compares `replica new` with `git clone` plus install, `git worktree` plus install, and `cp -c`, and it also measures `replica rm` and `replica base refresh`.
 
-The last recorded run is from 2026-10-25 on an Apple M1 Max, macOS 26.6.2, with a 1,842-file npm project. Its numbers are kept, with corrections, in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+```sh
+make bench                                         # bundled fixture project (~15 min)
+make bench PROJECT=~/code/app SETUP="npm ci" RUNS=30
+```
 
-| Method | Median | Notes |
-|---|---|---|
-| `git clone` + `npm ci` | 3.10 s | Clones a local path, so network time is excluded |
-| `git worktree` + `npm ci` | 2.51 s | Reuses the repo's object store |
-| `cp -c -R` of a built tree | 1.33 s | One clonefile per file, walked by `cp` |
-| **`replica new`** | **66 ms** | One `clonefile(2)` call on the directory |
+Two runs are recorded in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), with methodology and corrections:
 
-- **Why `replica new` is about 20x faster than `cp -c`.** `replica` makes one `clonefile(2)` call on the workspace directory, and the kernel clones the whole hierarchy. `cp -c -R` walks the tree in user space and clones file by file, so its time grows with the file count. This explains the gap we measured. We have not captured a syscall trace to confirm the split.
-- **The project is thousands of files, not tens of thousands.** The fixture has 1,842 files. Larger trees are expected to cost more, because metadata grows with file count, but that has not been measured.
-- **The old `replica rm` row is not a removal benchmark.** It timed `gc --dry-run`, `list`, and up to five removals together. Its 721 ms P95 fits that mixed command, which includes several removals and a gc scan, so it does not describe one `rm`. We have not profiled it to confirm the cause. The current suite times a single `replica rm` against `rm -rf` of a clone.
+- **2026-11-09, under heavy load** (1-minute load 171–184 on 10 cores, from other sessions). Relative ordering matches the clean run, but absolute times are inflated.
 
-The current suite has not yet produced a run on an idle machine. It refuses to run when the 1-minute load average is above a quarter of the cores, so results are only recorded when the machine is quiet. Run `make bench` to record one.
+  | Method | Median |
+  |---|---|
+  | `git clone` + setup | 3.9 s |
+  | `git worktree` + setup | 3.1 s |
+  | `cp -c -R` of a built tree | 1.3 s |
+  | **`replica new`** | **78 ms** |
+  | `replica rm` | 235 ms |
+  | `replica base refresh` (no upstream changes) | 534 ms |
+
+- **2026-10-25, quiet machine** (previous harness, 1,842 files): `replica new` 66 ms, `git clone` + setup 3.10 s, `cp -c` 1.33 s. Its `replica rm` row and its disk column are superseded.
+
+Replica adds about 1.4 MB of APFS metadata per clone for a 1,700-file project, measured on a quiet machine. Data blocks are shared, and changed files cost real space as the agent works. The [replica-benchmarks skill](skills/replica-benchmarks/SKILL.md) lists what a clean run needs.
 
 ## Development
 
