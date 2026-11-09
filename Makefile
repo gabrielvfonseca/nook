@@ -28,8 +28,8 @@ install: release ## Install to $(PREFIX)/bin (default /usr/local); INSTALL_LAUNC
 uninstall: ## Remove the installed binary and launchd agent (keeps workspaces)
 	./scripts/uninstall.sh
 
-bench: release ## Run benchmarks (PROJECT=dir SETUP="cmd" RUNS=n; see benchmarks/README.md)
-	./benchmarks/run.sh $(if $(PROJECT),--project $(PROJECT)) $(if $(SETUP),--setup "$(SETUP)") $(if $(RUNS),--runs $(RUNS))
+bench: release ## Run benchmarks (PROJECT=dir SETUP="cmd" RUNS=n CONCURRENCY="1,5,10"; see benchmarks/README.md)
+	./benchmarks/run.sh $(if $(PROJECT),--project $(PROJECT)) $(if $(SETUP),--setup "$(SETUP)") $(if $(RUNS),--runs $(RUNS)) $(if $(CONCURRENCY),--concurrency $(CONCURRENCY))
 
 skills-check: ## Validate every skills/*/SKILL.md has name and description frontmatter
 	@for f in skills/*/SKILL.md; do \

@@ -64,6 +64,13 @@ PATH="$PWD/target/release:$PATH" \
   benchmarks/run.sh --concurrency 1,5,10        # small fixture, all methods
 ```
 
+Or via make:
+
+```sh
+make bench                                      # small fixture, N=1
+make bench CONCURRENCY=1,5,10                   # parallel workspace creation
+```
+
 For a custom project:
 
 ```sh
@@ -156,5 +163,24 @@ Runs: 3 per method. Corrections above apply to the `replica rm` row and the disk
 - `replica new` at 66 ms was 47x faster than `git clone` plus `npm ci` (3.10 s), and 20x faster than `cp -c` (1.33 s).
 - The `cp -c` result was 2.3x faster than the git clone, so most of the git clone's time is the install, not the copy.
 - The base build (one time) is not part of these numbers.
+
+## Pending: medium and large project sizes
+
+The current published results use the small fixture (~1.7k files). Synthetic
+medium (~30k files) and large (~100k+ files) npm projects have been prepared at
+`/tmp/replica-bench-projects/medium-project` and
+`/tmp/replica-bench-projects/large-project` respectively, but clean benchmark
+runs could not be completed on the shared machine due to high CPU load from
+other processes. To run them once the machine is idle:
+
+```sh
+make release
+PATH="$PWD/target/release:$PATH" \
+  benchmarks/run.sh --project /tmp/replica-bench-projects/medium-project \
+  --concurrency 1,5,10 --allow-busy
+PATH="$PWD/target/release:$PATH" \
+  benchmarks/run.sh --project /tmp/replica-bench-projects/large-project \
+  --concurrency 1 --runs 3 --allow-busy
+```
 
 Add new runs above this section, newest first.
