@@ -11,10 +11,10 @@ jobs:
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}" }
       - run: cargo build --release --target ${{ matrix.target }}
       - run: tar -C target/${{ matrix.target }}/release -czf replica-${{ matrix.target }}.tar.gz replica
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with: { files: "replica-${{ matrix.target }}.tar.gz" }
