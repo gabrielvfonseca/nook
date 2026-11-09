@@ -34,10 +34,8 @@ Replica builds a **base** once: a git clone with its dependencies installed. Eac
 Binaries are published for macOS on Apple Silicon (`arm64`) and Intel (`x86_64`). A universal binary covers both.
 
 ```sh
-# Homebrew: the formula lives in this repo under homebrew/ (see homebrew/README.md)
-brew tap gabrielvfonseca/replica https://github.com/gabrielvfonseca/replica
-brew trust gabrielvfonseca/replica
-brew install gabrielvfonseca/replica/replica
+# Homebrew: the formula is homebrew/Formula/replica.rb (see homebrew/README.md)
+brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
 
 # Installer script: verifies the download against sha256sums.txt
 curl -fsSL https://raw.githubusercontent.com/gabrielvfonseca/replica/main/scripts/get-replica.sh | sh

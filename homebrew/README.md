@@ -1,23 +1,18 @@
 # Homebrew formula for Replica
 
-This directory is the Homebrew tap for Replica. There is no separate tap
-repository: the project root is the tap, and the root `Formula` symlink points
-at `homebrew/Formula/`, which is where Homebrew looks for formulae.
-
-Install (one time):
+The formula lives at [`Formula/replica.rb`](Formula/replica.rb) in this directory.
+It is installed directly from its URL. There is no tap repository and no
+symlink at the project root.
 
 ```sh
-brew tap gabrielvfonseca/replica https://github.com/gabrielvfonseca/replica
-brew trust gabrielvfonseca/replica          # Homebrew asks you to trust third-party taps
-brew install gabrielvfonseca/replica/replica
+brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
 ```
 
-- `brew install` fetches the prebuilt binary for your architecture from the
-  GitHub release (`replica-darwin-arm64` or `replica-darwin-x86_64`).
-- `brew install --HEAD gabrielvfonseca/replica/replica` builds from `main` with Rust.
-- Upgrade: `brew update && brew upgrade replica`.
+- The formula installs the prebuilt binary for your architecture from the GitHub
+  release (`replica-darwin-arm64` or `replica-darwin-x86_64`).
+- For a build from `main`, install the formula from its URL with `--HEAD`.
+- Upgrade: reinstall from the same URL after a new release is published.
 - Background GC every 10 minutes: `brew services start replica`.
 
-Formula source: [`Formula/replica.rb`](Formula/replica.rb). The release script
-([`scripts/release.sh`](../scripts/release.sh)) writes the checksums from the
-release artifacts, so do not edit them by hand.
+The release script ([`scripts/release.sh`](../scripts/release.sh)) writes the
+checksums from the release artifacts, so do not edit them by hand.
