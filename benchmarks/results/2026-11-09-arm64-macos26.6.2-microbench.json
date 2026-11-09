@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-09",
+  "machine": "Apple M1 Max",
+  "macos": "26.6.2",
+  "build": "25G83",
+  "arch": "arm64",
+  "project": "/Users/gabrielfonseca/Desktop/replica/benchmarks/fixtures/npm-app",
+  "setup": "npm ci --no-audit --no-fund",
+  "replica": "replica 0.1.0",
+  "files": 1739,
+  "results": [
+    {
+      "name": "replica new (whole-tree clonefile)",
+      "mean": 0.06699856996,
+      "median": 0.060793161260000006,
+      "min": 0.04455647376,
+      "max": 0.09908234876000002,
+      "stddev": 0.01817654666522627,
+      "runs": 10,
+      "p95": 0.09908234876000002
+    },
+    {
+      "name": "cp -c -R of prebuilt base (per-file clonefile)",
+      "mean": 0.86043990412,
+      "median": 0.8809069876200001,
+      "min": 0.6672584461200001,
+      "max": 1.09127757012,
+      "stddev": 0.1272092221496168,
+      "runs": 10,
+      "p95": 1.09127757012
+    }
+  ]
+}

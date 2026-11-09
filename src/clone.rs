@@ -9,8 +9,16 @@ extern "C" {
 }
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// Clone `src` to `dst` via APFS copy-on-write. Fails (never falls back to copy)
-/// if dst exists or src/dst are on different volumes.
+/// Clone `src` to `dst` via APFS copy-on-write.
+///
+/// `src` is a directory, so this is a single `clonefile(2)` call on the root that
+/// recursively clones the whole tree atomically in the kernel. It is *not* a
+/// per-file userspace walk like `cp -c -R`, which clonefiles every file
+/// individually. This is why `replica new` is tens of milliseconds while `cp -c
+/// -R` of the same tree is over a second.
+///
+/// Fails (never falls back to copy) if dst exists or src/dst are on different
+/// volumes — a cross-volume clone must error loudly, never silently copy.
 pub fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
     let s = CString::new(src.as_os_str().as_bytes())?;
     let d = CString::new(dst.as_os_str().as_bytes())?;
