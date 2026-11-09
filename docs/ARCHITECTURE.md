@@ -106,3 +106,45 @@ scales with file count even though the data blocks are shared. The
 
 A user-space filesystem adds a context switch to every operation, and APFS
 already does this work in the kernel.
+
+## Path-dependent artifacts in cloned trees
+
+Some tools bake the absolute path of the build tree into their output. Those
+artifacts break when the tree is clonefiled to a new path. `replica base check`
+reports each one it finds (exit 0 even when issues exist), and the fix is one
+of: a post-clone hook, a rewrite, or excluding the artifact from the base.
+
+| Artifact | Kind detected by `base check` | Fix |
+|---|---|---|
+| Python venv (`pyvenv.cfg`, `bin/activate`) | `pyvenvcfg`, `venvscript` | Exclude venvs from the base and recreate them in a `--post-clone` hook, or use `virtualenv --copies` so shebangs are relative. |
+| `node_modules/.bin` shims | `nodemodulesbin` | Reinstall deps after cloning (`npm ci` / `pnpm install` in `--post-clone`); pnpm handles relocatable shims best. |
+| TypeScript `.tsbuildinfo` | `tsbuildinfo` | Exclude `.tsbuildinfo` from the base (add to `.gitignore`) and regenerate after cloning. |
+| Cargo `target/` fingerprints | `cargotargetfile` | See below. |
+
+### Rust `target/`
+
+Cargo bakes absolute paths into `target/` (`.d` dep files, `.rlib`, `.rmeta`,
+`.fingerprint`). I measured what happens when a tree containing `target/` is
+clonefiled to a new path:
+
+- **No-op build** (`cargo build` with no source change): `Finished` in ~20 ms,
+  no recompilation — cloned `target/` does **not** force a full rebuild.
+- **Incremental rebuild** (touch one source file): Cargo recompiles only the
+  changed crate and its dependents, correctly, in the clone.
+
+So cloning `target/` is safe for correctness, but it adds APFS metadata per
+clone (one record per file) for no benefit, since a workspace rarely needs the
+base's build output. **Recommendation:** exclude `target/` from the base (add to
+`.gitignore`), point `CARGO_TARGET_DIR` at a shared directory under
+`$REPLICA_ROOT/cache`, and optionally use `sccache`. This keeps clones small
+and fast while preserving incremental builds across workspaces.
+
+### Verified by ecosystem
+
+| Ecosystem | `base check` finds | Recommended handling | Verified to clone cleanly |
+|---|---|---|---|
+| npm / `node_modules` | `.bin` shims with absolute paths | `npm ci` in `--post-clone`, or exclude `node_modules` | Yes, after reinstall |
+| pnpm | `.bin` shims (relocatable by design) | `pnpm install --frozen-lockfile` in `--post-clone` | Yes, best of the three |
+| Cargo | `target/` fingerprints | Exclude `target/`; shared `CARGO_TARGET_DIR` + sccache | Yes (target/ optional) |
+| Python | `pyvenv.cfg`, `bin/activate` | Recreate venv after cloning | Yes, after recreating venv |
+
