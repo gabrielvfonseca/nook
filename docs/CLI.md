@@ -134,7 +134,13 @@ Staleness means git HEAD moved or a lockfile changed since the build. `--json` r
 replica base refresh
 ```
 
-Rebuilds the base with the repo and setup command it was built with. The new tree is built as `base.new` and swapped in with two renames. Existing workspaces keep working, because clonefile gave each one its own blocks. A base built before v0.1 has no recorded repo, so refresh asks you to rebuild once with `base build` (exit 1).
+Brings the base up to date with its remote. It uses the repo and setup command recorded at build time.
+
+1. **Fast path.** Clonefiles the current base (a metadata-only copy; no data is copied), then runs `git fetch origin` and `git reset --hard origin/HEAD` in the copy.
+2. **Setup only if needed.** Re-runs the setup command only when a lockfile hash changed. If nothing lockfile-related changed, setup is skipped.
+3. **Swap.** Replaces `base/` with the copy. Existing workspaces keep working, because each one owns its blocks.
+
+If the fast path fails (for example, the remote is unreachable or `origin/HEAD` is missing), refresh falls back to a full rebuild from the repo. A base built before v0.1 has no recorded repo, so refresh asks you to rebuild once with `base build` (exit 1).
 
 ## Maintenance
 

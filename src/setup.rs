@@ -342,7 +342,7 @@ pub fn generate_instructions(agent_name: &str, replica_root: &Path) -> String {
 ## When to use replica
 - Starting a new coding task that needs an isolated workspace
 - Running multiple agent sessions in parallel
-- When you need fast workspace creation (< 100ms)
+- When you need fast workspace creation (milliseconds, not the seconds a git clone plus install takes)
 
 ## Commands
 - `replica new [--ttl 2h]` - Create workspace, prints path

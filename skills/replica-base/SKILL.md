@@ -73,13 +73,15 @@ A base goes stale when git HEAD or any lockfile changes after the build.
 ```sh
 replica base status              # shows STALE and the reasons
 replica new --require-fresh      # exit 2 instead of cloning a stale base
-replica base refresh             # rebuild with the original repo and setup
+replica base refresh             # fetch the remote; re-run setup only if a lockfile changed
 ```
 
-`refresh` rebuilds the base in `base.new`, then swaps it in. Existing
-workspaces keep working, because clonefile gave them their own blocks. A base
-built before v0.1 has no stored repo or setup command. `refresh` says so and
-tells you to rebuild once with `replica base build`.
+`replica base refresh` is the cheap path when upstream moved but lockfiles did
+not. It clonefiles the existing base (metadata only), fetches the remote, and
+resets the copy to `origin/HEAD`. It re-runs setup only if a lockfile hash
+changed. Setup is the expensive part, so a lockfile change costs about as much
+as a build. A base built before v0.1 has no recorded repo, so rebuild it once
+with `replica base build`.
 
 ## Common problems
 

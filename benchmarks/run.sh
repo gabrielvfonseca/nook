@@ -188,6 +188,10 @@ bench "rm -rf of a cp -c clone" "$RUNS" 3 \
   "cp -c -R '$BASE' '$W/rm-target'" \
   "rm -rf '$W/rm-target'"
 
+# Keeping the base fresh. Nothing changed upstream: this is the common case.
+bench "replica base refresh (no changes)" "$SLOW_RUNS" 1 "" \
+  "replica base refresh >/dev/null 2>&1"
+
 # ---- disk per clone (df delta over many clones) -----------------------------
 
 used_kb() { df -k "$REPLICA_ROOT" | tail -1 | awk '{print $3}'; }
@@ -273,6 +277,7 @@ row() {
   row "replica new" "$(fmt "$DISK_REPLICA") MB"
   row "replica rm" "–"
   row "rm -rf of a cp -c clone" "–"
+  row "replica base refresh (no changes)" "–"
   echo
   echo "- Project: \`$PROJECT\` ($PKG_COUNT locked packages, $FILE_COUNT files after setup)"
   echo "- Setup command: \`$SETUP_CMD\`"
