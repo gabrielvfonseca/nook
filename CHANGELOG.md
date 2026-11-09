@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-11-09
 
 ### Added
 - `replica help [topic]`: a guided overview, with topics quickstart, workspaces, base, safety, agents, env, and exit-codes. It works before `REPLICA_ROOT` exists.

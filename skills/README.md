@@ -10,7 +10,7 @@ which the skills.sh CLI and most coding agents can read.
 | [replica-maintenance](replica-maintenance/SKILL.md) | Disk is filling up, or gc is removing the wrong things |
 | [replica-dev](replica-dev/SKILL.md) | Changing the Replica codebase |
 | [replica-benchmarks](replica-benchmarks/SKILL.md) | Running benchmarks or publishing performance numbers |
-| [replica-release](replica-release/SKILL.md) | Cutting a release and updating the Homebrew tap |
+| [replica-release](replica-release/SKILL.md) | Cutting a release and updating the Homebrew formula in `homebrew/` |
 
 ## Install
 

@@ -125,9 +125,7 @@ ruby -c "$TAP_DIR/Formula/replica.rb" >/dev/null
 echo "wrote $TAP_DIR/Formula/replica.rb"
 cat <<EOF
 
-Next, in the tap (not done by this script):
-  # homebrew/ lives in this repo; publish it as the tap repo:
+Next (the tap is this repository, under homebrew/):
   git add homebrew/Formula/replica.rb && git commit -m "Homebrew formula for replica $VERSION"
-  git subtree split --prefix=homebrew -b tap-publish
-  git push gh-tap tap-publish:main   # gh-tap = git@github.com:gabrielvfonseca/homebrew-tap.git
+  git push origin main   # or open a PR, as usual
 EOF
