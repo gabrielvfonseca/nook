@@ -6,7 +6,7 @@ Replica is a fast APFS clonefile workspace manager designed for agent workloads.
 ## When to Use Replica
 - **Starting a new task** that needs a clean, isolated project tree
 - **Running multiple parallel sessions** without interference
-- **When you need fast workspace creation** (< 100ms vs seconds for git clone)
+- **When you need fast workspace creation** (milliseconds, vs the seconds a git clone plus install takes)
 - **When disk space is constrained** - clones share blocks copy-on-write
 
 ## Quick Start
@@ -41,15 +41,18 @@ claude .
 ## Key Commands
 | Command | Description |
 |---------|-------------|
-| `replica new [--ttl 2h] [--name label] [--post-clone <cmd>]` | Create workspace |
+| `replica help [topic]` | Guide. Topics: quickstart, workspaces, base, safety, agents, env, exit-codes |
+| `replica new [--ttl 2h] [--name label] [--post-clone <cmd>] [--require-fresh]` | Create workspace (path on stdout) |
 | `replica env <id>` | Print export lines for workspace |
-| `replica list` | List active workspaces |
+| `replica list [--json]` | List active workspaces |
 | `replica touch <id>` | Update last-used timestamp (prevents LRU eviction) |
-| `replica rm <id>...` | Delete workspace(s) |
+| `replica rm <id>...` | Delete workspace(s) (idempotent) |
 | `replica gc [--dry-run]` | Expire by TTL, evict LRU if volume > 80% |
-| `replica stats` | Show volume usage and workspace count |
+| `replica stats [--json]` | Show volume usage and workspace count |
 | `replica base build --repo <url> --setup <cmd>` | Build the golden base tree |
-| `replica base status` | Check base freshness |
+| `replica base check` | Find absolute paths that break in clones |
+| `replica base status [--json]` | Show base age, HEAD, and staleness |
+| `replica base refresh` | Rebuild the base with its original repo and setup |
 
 ## Configuration
 Set `REPLICA_ROOT` to your APFS volume (default: `/Volumes/Work/replica`):
@@ -74,8 +77,9 @@ export REPLICA_ROOT=/Volumes/Work/replica
 - **"no base" error**: Run `replica base build` first
 - **"disk cap reached"**: Increase `REPLICA_MAX_BYTES` or run `replica gc`
 - **Stale base warning**: Run `replica base refresh` to rebuild
+- **Exit codes**: 2 means no base or a stale base with `--require-fresh`, 3 cross-volume, 4 disk full or cap. Run `replica help exit-codes`
 
 ## More Info
 - `replica --help` for all commands
-- `man replica` (if installed)
-- Source: https://github.com/gabrielfonseca/replica
+- `replica help` for a guided overview, and `replica help <topic>` for a topic
+- Source: https://github.com/gabrielvfonseca/replica

@@ -168,8 +168,7 @@ fn check_node_modules(dir: &Path, base_str: &str, findings: &mut Vec<Finding>) -
                 check_symlink(&path, base_str, findings)?;
             } else if md.is_file() && is_text_file(&path) {
                 // Check for absolute path in node_modules/.bin scripts
-                let content = fs::read_to_string(&path)?;
-                if content.contains(base_str) {
+                if file_contains(&path, base_str) {
                     findings.push(Finding {
                         kind: FindingKind::NodeModulesBin,
                         path: path.to_path_buf(),
@@ -191,11 +190,22 @@ fn check_node_modules(dir: &Path, base_str: &str, findings: &mut Vec<Finding>) -
     Ok(())
 }
 
+fn file_contains(path: &Path, needle: &str) -> bool {
+    match fs::read(path) {
+        Ok(bytes) => bytes.windows(needle.len()).any(|w| w == needle.as_bytes()),
+        Err(_) => false,
+    }
+}
+
 fn check_pyvenv_cfg(path: &Path, base_str: &str, findings: &mut Vec<Finding>) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    for line in content.lines() {
-        if line.trim().starts_with("home = ") {
-            let home_path = line.trim().strip_prefix("home = ").unwrap().trim();
+    let content = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(()),
+    };
+    let text = String::from_utf8_lossy(&content);
+    for line in text.lines() {
+        if let Some(home_path) = line.trim().strip_prefix("home = ") {
+            let home_path = home_path.trim();
             if home_path.starts_with(base_str) {
                 findings.push(Finding {
                     kind: FindingKind::PyVenvCfg,
@@ -209,8 +219,7 @@ fn check_pyvenv_cfg(path: &Path, base_str: &str, findings: &mut Vec<Finding>) ->
 }
 
 fn check_venv_script(path: &Path, base_str: &str, findings: &mut Vec<Finding>) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    if content.contains(base_str) {
+    if file_contains(path, base_str) {
         findings.push(Finding {
             kind: FindingKind::VenvScript,
             path: path.to_path_buf(),
@@ -221,8 +230,7 @@ fn check_venv_script(path: &Path, base_str: &str, findings: &mut Vec<Finding>) -
 }
 
 fn check_tsbuildinfo(path: &Path, base_str: &str, findings: &mut Vec<Finding>) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    if content.contains(base_str) {
+    if file_contains(path, base_str) {
         findings.push(Finding {
             kind: FindingKind::TsBuildInfo,
             path: path.to_path_buf(),
@@ -237,8 +245,7 @@ fn check_text_file_for_path(
     base_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    if content.contains(base_str) {
+    if file_contains(path, base_str) {
         findings.push(Finding {
             kind: FindingKind::AbsolutePathInFile,
             path: path.to_path_buf(),

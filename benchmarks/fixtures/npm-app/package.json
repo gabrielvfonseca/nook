@@ -1,0 +1,23 @@
+{
+  "name": "replica-bench-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixed npm project used by benchmarks/run.sh. Changing deps invalidates published results.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "axios": "1.7.7",
+    "chalk": "4.1.2",
+    "commander": "12.1.0",
+    "lodash": "4.17.21",
+    "uuid": "10.0.0",
+    "zod": "3.23.8",
+    "debug": "4.3.7",
+    "dotenv": "16.4.5",
+    "js-yaml": "4.1.0",
+    "semver": "7.6.3",
+    "mime-types": "2.1.35"
+  }
+}

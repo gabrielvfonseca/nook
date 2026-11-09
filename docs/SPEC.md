@@ -28,16 +28,18 @@ cleanup is slow, and leftover build output and temp files fill the disk.
 | R3 | Metadata persisted in SQLite; crash-safe (WAL). |
 | R4 | `gc` deletes expired workspaces, then evicts LRU until volume usage < low-water mark. |
 | R5 | Deletion is parallel and symlink-safe. |
-| R6 | Base rebuild is atomic (build in `base.new`, rename swap). |
+| R6 | Base rebuild builds in `base.new` and swaps it in with two renames. A crash between the renames leaves no base, and a rebuild fixes that. |
 | R7 | `stats` reports volume free space from `statvfs`, not `du`. |
-| R8 | Concurrent `new`/`gc` safe via SQLite transactions + per-workspace state. |
+| R8 | Each SQL statement is atomic and deletes move a workspace to `deleting` first. Overlapping `new` and `gc` runs are not yet guaranteed safe; see ROADMAP. |
 
 ## Success criteria
 Measured on the user's machine (see BENCHMARKS.md): clone is >= 5-10x faster than the
 current setup path. If not, the bottleneck is elsewhere and Replica should not be adopted.
+The claim is still open: the current suite has not yet produced a run on an idle machine.
 
 ## Risks
 - Clone time still scales with file count.
 - Space reclaimed on delete only when no other clone shares the blocks.
 - Security tools may still scan cloned files on first access.
+- Each clone adds APFS metadata for every file (about 1.4 MB for a 1,700-file project), so disk use grows with file count.
 - Tools that hardlink or use absolute paths inside the tree may misbehave when cloned.

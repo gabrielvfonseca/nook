@@ -6,7 +6,7 @@ Replica creates instant, isolated workspaces using macOS APFS clonefile (copy-on
 ## When to Use Replica
 - New coding tasks needing clean project state
 - Parallel Copilot sessions without interference
-- Sub-100ms workspace creation
+- Millisecond workspace creation
 - Disk efficiency via copy-on-write
 
 ## Quick Start
@@ -41,4 +41,4 @@ export REPLICA_ROOT=/Volumes/Work/replica
 
 ## More Info
 - `replica --help`
-- https://github.com/gabrielfonseca/replica
+- https://github.com/gabrielvfonseca/replica

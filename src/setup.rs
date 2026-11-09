@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The agent-facing replica skill, installed as `<skill_dir>/replica/SKILL.md`.
+const REPLICA_SKILL: &str = include_str!("../skills/replica/SKILL.md");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
@@ -217,29 +220,44 @@ pub fn generate_agent_config(
 
         let template_content = get_template(&config_file.template, replica_root)?;
 
-        if target_path.exists() && !force && !config_file.append && !dry_run {
-            let backup = target_path.with_extension(format!(
-                "{}.bak",
-                target_path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("bak")
-            ));
-            fs::copy(&target_path, &backup).with_context(|| {
-                format!("backing up existing config: {}", target_path.display())
-            })?;
-            eprintln!(
-                "  backed up existing {} to {}",
-                target_path.display(),
-                backup.display()
-            );
-        }
-
-        let final_content = if config_file.append && target_path.exists() {
-            let existing = fs::read_to_string(&target_path)
-                .with_context(|| format!("reading existing config: {}", target_path.display()))?;
-            format!("{}\n\n{}", existing, template_content)
+        let final_content = if config_file.append {
+            // Appended configs are added once. Re-running setup must not duplicate them.
+            let existing = if target_path.exists() {
+                fs::read_to_string(&target_path).with_context(|| {
+                    format!("reading existing config: {}", target_path.display())
+                })?
+            } else {
+                String::new()
+            };
+            if existing.contains(template_content.trim()) {
+                println!("  already configured: {}", target_path.display());
+                continue;
+            }
+            if existing.is_empty() {
+                template_content
+            } else {
+                format!("{}\n\n{}", existing, template_content)
+            }
         } else {
+            // Replaced configs are only touched with --force, and the original is always backed up first.
+            if target_path.exists() && !force {
+                println!(
+                    "  kept existing {} (run with --force to replace it)",
+                    target_path.display()
+                );
+                continue;
+            }
+            if target_path.exists() && !dry_run {
+                let backup = backup_path(&target_path);
+                fs::copy(&target_path, &backup).with_context(|| {
+                    format!("backing up existing config: {}", target_path.display())
+                })?;
+                println!(
+                    "  backed up {} to {}",
+                    target_path.display(),
+                    backup.display()
+                );
+            }
             template_content
         };
 
@@ -259,9 +277,16 @@ pub fn generate_agent_config(
     Ok(())
 }
 
+/// `CLAUDE.md` -> `CLAUDE.md.bak`, `.cursorrules` -> `.cursorrules.bak`.
+fn backup_path(target: &Path) -> PathBuf {
+    let mut name = target.as_os_str().to_owned();
+    name.push(".bak");
+    PathBuf::from(name)
+}
+
 pub fn install_skills(
     agent: &DetectedAgent,
-    replica_root: &Path,
+    _replica_root: &Path,
     _force: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -279,50 +304,13 @@ pub fn install_skills(
         })?;
     }
 
-    let skill_toml_content = r#"name = "replica"
-version = "0.1.0"
-description = "APFS clonefile workspace manager for agent workloads"
-author = "replica contributors"
-agent_compatibility = ["claude", "cursor", "copilot", "zed", "aider"]
-"#;
-
-    let skill_toml_path = replica_skill_dir.join("skill.toml");
+    let skill_md_path = replica_skill_dir.join("SKILL.md");
     if dry_run {
-        println!("  would write skill.toml: {}", skill_toml_path.display());
+        println!("  would write SKILL.md: {}", skill_md_path.display());
     } else {
-        fs::write(&skill_toml_path, skill_toml_content)
-            .with_context(|| format!("writing skill.toml: {}", skill_toml_path.display()))?;
-        println!("  wrote skill.toml: {}", skill_toml_path.display());
-    }
-
-    let instructions_content = generate_instructions(&agent.config.name, replica_root);
-    let instructions_path = replica_skill_dir.join("instructions.md");
-    if dry_run {
-        println!(
-            "  would write instructions.md: {}",
-            instructions_path.display()
-        );
-    } else {
-        fs::write(&instructions_path, instructions_content)
-            .with_context(|| format!("writing instructions.md: {}", instructions_path.display()))?;
-        println!("  wrote instructions.md: {}", instructions_path.display());
-    }
-
-    let skills_sh_content = generate_skills_sh(replica_root);
-    let skills_sh_path = skill_dir.join(&skill_registration.install_script);
-    if dry_run {
-        println!("  would write skills.sh: {}", skills_sh_path.display());
-    } else {
-        fs::write(&skills_sh_path, skills_sh_content)
-            .with_context(|| format!("writing skills.sh: {}", skills_sh_path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&skills_sh_path)?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&skills_sh_path, perms)?;
-        }
-        println!("  wrote skills.sh: {}", skills_sh_path.display());
+        fs::write(&skill_md_path, REPLICA_SKILL)
+            .with_context(|| format!("writing SKILL.md: {}", skill_md_path.display()))?;
+        println!("  wrote SKILL.md: {}", skill_md_path.display());
     }
 
     Ok(())
@@ -408,7 +396,7 @@ pub fn generate_homebrew_formula(replica_root: &Path, version: &str, dry_run: bo
 
     let formula = formula_template
         .replace("{{VERSION}}", version)
-        .replace("{{GITHUB_REPO}}", "gabrielfonseca/replica")
+        .replace("{{GITHUB_REPO}}", "gabrielvfonseca/replica")
         .replace("{{SHA256_ARM}}", "REPLACE_WITH_ACTUAL_SHA256_ARM")
         .replace("{{SHA256_INTEL}}", "REPLACE_WITH_ACTUAL_SHA256_INTEL")
         .replace("{{HOMEBREW_PREFIX}}", "/usr/local")
