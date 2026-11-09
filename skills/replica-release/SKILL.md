@@ -5,12 +5,9 @@ description: Cut a Replica release. Covers the version bump, CHANGELOG, building
 
 # Replica release and Homebrew
 
-There is no tap repository and no root symlink. The formula is
-`homebrew/Formula/replica.rb`, and users install it from its URL:
-
-```sh
-brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
-```
+The formula is `homebrew/Formula/replica.rb`. It is not installable with
+`brew` yet: Homebrew needs a tap with `Formula/` at a repository root, and this
+repository has none by design. See `homebrew/README.md` for the options.
 
 ## Steps
 
@@ -35,7 +32,7 @@ brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/home
 6. **Commit the formula** to `main` (PR), so `brew` users get the new checksums.
 7. **Verify** from a clean shell:
    ```sh
-   brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
+   # brew: not available until a tap layout is chosen (see homebrew/README.md)
    replica --version && replica help
    ```
 

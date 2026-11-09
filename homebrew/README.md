@@ -1,18 +1,21 @@
-# Homebrew formula for Replica
+# Homebrew formula for Replica (not yet installable)
 
-The formula lives at [`Formula/replica.rb`](Formula/replica.rb) in this directory.
-It is installed directly from its URL. There is no tap repository and no
-symlink at the project root.
+The formula is at [`Formula/replica.rb`](Formula/replica.rb). Its checksums match
+the published v0.1.0 release artifacts.
 
-```sh
-brew install https://raw.githubusercontent.com/gabrielvfonseca/replica/main/homebrew/Formula/replica.rb
-```
+**Status: `brew install` does not work yet.** Homebrew installs formulae from taps,
+which need a `Formula/` directory at the root of a repository. This repository
+does not have one, by design: the formula stays under `homebrew/`, and the root
+`Formula` symlink was removed on request. Checked on Homebrew 7.0.12: installing
+from a URL, a relative path, or an absolute path all fail with `Invalid tap name`.
 
-- The formula installs the prebuilt binary for your architecture from the GitHub
-  release (`replica-darwin-arm64` or `replica-darwin-x86_64`).
-- For a build from `main`, install the formula from its URL with `--HEAD`.
-- Upgrade: reinstall from the same URL after a new release is published.
-- Background GC every 10 minutes: `brew services start replica`.
+Until a layout is chosen, install with the installer script
+([`scripts/get-replica.sh`](../scripts/get-replica.sh)) or from source.
 
-The release script ([`scripts/release.sh`](../scripts/release.sh)) writes the
-checksums from the release artifacts, so do not edit them by hand.
+Options to make Homebrew work from this repository:
+
+1. Restore a root `Formula/` (a symlink to `homebrew/Formula`, or a real directory),
+   then users run `brew tap gabrielvfonseca/replica https://github.com/gabrielvfonseca/replica`,
+   `brew trust gabrielvfonseca/replica`, and `brew install gabrielvfonseca/replica/replica`.
+   This was verified locally.
+2. Publish a separate `homebrew-tap` repository (the formula is ready for it).
