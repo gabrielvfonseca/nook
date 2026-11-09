@@ -40,6 +40,10 @@ pub struct BaseInfo {
 pub fn open(db: &Path) -> Result<Connection> {
     let c = Connection::open(db)?;
     c.execute_batch("PRAGMA journal_mode=WAL;")?;
+    // Serialize concurrent writers instead of failing with SQLITE_BUSY when a
+    // `replica new` and a `replica gc` (or two `replica new`s) run at the same
+    // time. 10 s is long enough for a clone+insert to finish under load.
+    c.execute_batch("PRAGMA busy_timeout = 10000;")?;
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS workspaces (
            id TEXT PRIMARY KEY, name TEXT, path TEXT NOT NULL UNIQUE,

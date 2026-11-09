@@ -48,8 +48,13 @@ $REPLICA_ROOT/
 | `ui.rs` | Color, status lines, tables, human units, JSON strings |
 | `help.rs` | Help overview and topics. Needs no root |
 | `clone.rs` | `clonefile(2)`. Maps EXDEV, ENOSPC, and ENOTSUP to typed errors. Never copies |
-| `store.rs` | SQLite schema, migrations, and queries |
-| `gc.rs` | `safe_remove`: canonicalize, check the prefix, delete in parallel without following symlinks |
+| `store.rs` | SQLite schema, migrations, and queries. Opens in WAL mode with a
+| 10 s `busy_timeout` so concurrent `new`/`gc` writers serialize instead of
+| failing with `SQLITE_BUSY`. |
+| `gc.rs` | `safe_remove`: canonicalize, check the prefix, delete in parallel without following symlinks.
+| Plus per-workspace lease files (`.replica/lease`) created by `new`, refreshed
+| by `touch`, and removed by `rm`; `gc` skips any workspace with a fresh lease
+| so it never deletes a workspace an agent is actively using. |
 | `volume.rs` | APFS check, same-volume check, `statvfs` usage |
 | `lockfile.rs` | Git HEAD, lockfile hashing, staleness |
 | `base_check.rs` | Scan for path-dependent files |
@@ -60,15 +65,18 @@ $REPLICA_ROOT/
 
 **new:** check root and APFS → open database → confirm `base/` exists (else exit 2) →
 warn or fail on staleness → enforce `REPLICA_MAX_BYTES` (else exit 4) → `clonefile`
-→ create `.replica/tmp` → insert row (`active`) → run `--post-clone` → print the path.
+→ create `.replica/tmp` → create a lease file marking the workspace in use →
+insert row (`active`) → run `--post-clone` → print the path.
 
 **rm:** look up row (unknown → "already removed") → mark `deleting` → `safe_remove`
-→ delete row. A failure leaves the row in `deleting` for gc.
+→ remove lease → delete row. A failure leaves the row in `deleting` for gc.
 
 **gc:** retry `deleting` rows → remove expired workspaces → if usage is above the
 high-water mark, remove least-recently-used workspaces not used in the last 10 minutes,
 stopping once usage is below the low-water mark. Each removal is marked `deleting`
-first.
+first. A workspace with a fresh lease file (created by `new`, refreshed by `touch`)
+is skipped, so `gc` (including launchd every 10 min) never deletes a workspace
+an agent is actively using.
 
 **base build:** clone repo into `base.new` → run setup there → record HEAD, lockfile
 hash, repo, and setup command → rename `base` to `base.old` → rename `base.new` to
