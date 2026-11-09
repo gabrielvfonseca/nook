@@ -81,9 +81,18 @@ are unaffected, because each one owns its blocks.
 
 A clone shares data blocks copy-on-write, and only modified blocks take new
 space. It works only within one APFS volume. That is why the base, workspaces,
-and caches all live under `$REPLICA_ROOT`. The clone still writes metadata for
-every file, so cost scales with file count. The [benchmarks](BENCHMARKS.md)
-measure that cost.
+and caches all live under `$REPLICA_ROOT`.
+
+`replica new` clones the base with **one** `clonefile(2)` call on the root of
+the tree. Because `src` is a directory, `clonefile` recursively clones the whole
+tree atomically in the kernel — it is not a per-file userspace walk like
+`cp -c -R`, which clonefiles every file individually. That single call is why
+`replica new` takes tens of milliseconds while `cp -c -R` of the same tree takes
+over a second (see the [microbenchmark](../benchmarks/microbench.sh)).
+
+The clone still writes one metadata record per file and directory, so cost
+scales with file count even though the data blocks are shared. The
+[benchmarks](BENCHMARKS.md) measure that cost.
 
 ## Why not FUSE or FSKit
 
