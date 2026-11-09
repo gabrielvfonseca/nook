@@ -1,0 +1,24 @@
+{
+    "format_on_save": "on",
+    "languages": {
+        "Rust": {
+            "formatter": {
+                "language_server": {
+                    "name": "rust-analyzer",
+                },
+            },
+        },
+    },
+    "lsp": {
+        "rust-analyzer": {
+            "initialization_options": {
+                "procMacro": {
+                    "enable": true,
+                },
+                "check": {
+                    "command": "clippy",
+                },
+            },
+        },
+    },
+}

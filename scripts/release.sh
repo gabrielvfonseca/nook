@@ -8,7 +8,7 @@
 # uploaded to the release. Nothing is taken from GitHub's generated source tarball.
 #
 # Environment:
-#   TAP_DIR   path to the Homebrew tap checkout (default: ../homebrew-tap next to the main repo)
+#   TAP_DIR   path to the Homebrew formula directory (default: homebrew/ in this repo)
 set -euo pipefail
 
 usage() {
@@ -31,7 +31,7 @@ done
 TAG="v$VERSION"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_REPO="$(dirname "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)")"
-TAP_DIR="${TAP_DIR:-$MAIN_REPO/../homebrew-tap}"
+TAP_DIR="${TAP_DIR:-$MAIN_REPO/homebrew}"
 NOTES="$(mktemp "${TMPDIR:-/tmp}/replica-notes.XXXXXX")"
 trap 'rm -f "$NOTES"' EXIT
 
@@ -126,8 +126,8 @@ echo "wrote $TAP_DIR/Formula/replica.rb"
 cat <<EOF
 
 Next, in the tap (not done by this script):
-  cd "$TAP_DIR"
-  brew style Formula/replica.rb
-  git add Formula/replica.rb && git commit -m "replica $VERSION"
-  git push origin main
+  # homebrew/ lives in this repo; publish it as the tap repo:
+  git add homebrew/Formula/replica.rb && git commit -m "Homebrew formula for replica $VERSION"
+  git subtree split --prefix=homebrew -b tap-publish
+  git push gh-tap tap-publish:main   # gh-tap = git@github.com:gabrielvfonseca/homebrew-tap.git
 EOF
