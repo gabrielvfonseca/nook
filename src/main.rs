@@ -220,6 +220,7 @@ fn run() -> Result<()> {
         Cmd::Touch { id } => {
             let ws = require_ws(&db, &id)?;
             store::touch(&db, &ws.id)?;
+            gc::refresh_lease(ws_root.as_path(), &ws.id)?;
             ui::status(Status::Ok, &format!("touched {}", ws.id));
         }
         Cmd::Rm { ids } => remove_workspaces(&db, &ws_root, &ids)?,
@@ -278,6 +279,10 @@ fn new_workspace(
     let dst = ws_root.join(&id);
     clone::clone_tree(&base, &dst)?;
     std::fs::create_dir_all(dst.join(".replica/tmp"))?;
+    // Mark the workspace in use before it becomes visible to gc, so a
+    // concurrent `replica gc` never removes a workspace that is still being
+    // set up.
+    gc::create_lease(ws_root, &id)?;
     store::insert(
         db,
         &id,
@@ -445,6 +450,7 @@ fn remove_workspaces(db: &rusqlite::Connection, ws_root: &Path, ids: &[String]) 
         store::set_state(db, id, "deleting")?;
         match gc::safe_remove(ws_root, &ws_root.join(id)) {
             Ok(()) => {
+                gc::remove_lease(ws_root, id)?;
                 store::delete(db, id)?;
                 ui::status(Status::Ok, &format!("removed {id}"));
             }
@@ -528,8 +534,14 @@ fn run_gc(
         if dry_run {
             ui::status(Status::Info, &format!("would remove {} ({label})", w.id));
         } else {
+            // Never remove a workspace with a fresh lease: an agent is using it.
+            if gc::lease_is_fresh(ws_root, &w.id)? {
+                ui::status(Status::Info, &format!("skip {} (in use)", w.id));
+                continue;
+            }
             store::set_state(db, &w.id, "deleting")?;
             gc::safe_remove(ws_root, Path::new(&w.path))?;
+            gc::remove_lease(ws_root, &w.id)?;
             store::delete(db, &w.id)?;
             ui::status(Status::Ok, &format!("removed {} ({label})", w.id));
         }
