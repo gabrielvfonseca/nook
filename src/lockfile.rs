@@ -38,7 +38,9 @@ pub fn compute_lockfile_hash(dir: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    Ok(Some(format!("{:x}", hasher.finalize())))
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(Some(hex))
 }
 
 /// Get the current git commit hash (HEAD) for the repo at dir
