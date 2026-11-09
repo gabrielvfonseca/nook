@@ -67,7 +67,7 @@ Run gc every 10 minutes with either:
 
 ```sh
 INSTALL_LAUNCHD=1 REPLICA_ROOT=/Volumes/Work/replica make install   # launchd agent
-brew services start replica                                         # Homebrew service
+# (Homebrew is not available yet; see HOMEBREW.md)
 ```
 
 The launchd agent is `dev.replica.gc` (`packaging/dev.replica.gc.plist`). Its

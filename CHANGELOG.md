@@ -12,7 +12,7 @@
 - Benchmark suite in `benchmarks/`: hyperfine-based, with untimed setup and cleanup, a pinned fixture project, and a machine-readable report. `make bench` runs it.
 - Agent skills in `skills/`, in SKILL.md format for the skills.sh CLI: `replica`, `replica-base`, `replica-maintenance`, `replica-dev`, `replica-benchmarks`, `replica-release`.
 - `make help`, `make bench`, and `make skills-check`.
-- Homebrew tap formula and `scripts/release.sh` for rendering it after a release.
+- `scripts/release.sh` for building and publishing a release. The Homebrew formula is not part of the release yet (see HOMEBREW.md).
 
 - `replica base refresh` fast path: clonefiles the base, fetches origin, resets to `origin/HEAD`, and re-runs setup only if a lockfile changed. Falls back to a full rebuild on failure.
 - Integration tests for git behavior: a workspace commits and pushes without touching the base, and refresh picks up new commits.

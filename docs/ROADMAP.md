@@ -7,7 +7,7 @@
 - **Phase 3, base.** `base build`, `check`, `status`, and `refresh` (refresh fast-path: clonefile + fetch + reset; setup runs only when a lockfile changed).
 - **Setup.** `replica setup` for Claude Code, Cursor, Copilot, Zed, Aider, and custom agents. Installs the SKILL.md skill.
 - **CLI.** `replica help` with topics, color and `NO_COLOR`, `--json` on list, stats, and base status, typed exit codes 1 to 4.
-- **Distribution.** Homebrew tap formula (see `skills/replica-release`).
+- **Distribution.** GitHub releases with universal binaries and an installer script. Homebrew is not available yet (see HOMEBREW.md).
 
 ## Next
 - **Orphan sweep.** Detect directories under `ws/` with no database row and remove them in `gc`.
