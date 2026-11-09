@@ -181,7 +181,7 @@ is stale. `replica new --require-fresh` refuses to clone a stale base.
 
 `replica base refresh` rebuilds the base using the repo and setup command it
 was built with. The new tree is built beside the old one and swapped in
-atomically, so existing workspaces keep working.
+so existing workspaces keep working.
 
 `replica base check` looks for absolute paths to the golden tree that will
 break in a clone (venvs, node_modules/.bin, tsbuildinfo, and so on). Fix them

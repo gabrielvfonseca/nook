@@ -4,7 +4,7 @@
 - **Phase 0, measure.** Benchmark suite in `benchmarks/`, with recorded runs in `benchmarks/results/`.
 - **Phase 1, clone core.** `new`, `rm`, `list`, `env`, `touch`, SQLite store, same-volume and APFS checks.
 - **Phase 2, safety.** `gc` (TTL, LRU, dry run, byte cap), parallel symlink-safe delete, `stats`, crash recovery for `deleting`.
-- **Phase 3, base.** `base build`, `check`, `status`, and `refresh` (atomic swap; refresh uses the recorded repo and setup command).
+- **Phase 3, base.** `base build`, `check`, `status`, and `refresh` (refresh fast-path: clonefile + fetch + reset; setup runs only when a lockfile changed).
 - **Setup.** `replica setup` for Claude Code, Cursor, Copilot, Zed, Aider, and custom agents. Installs the SKILL.md skill.
 - **CLI.** `replica help` with topics, color and `NO_COLOR`, `--json` on list, stats, and base status, typed exit codes 1 to 4.
 - **Distribution.** Homebrew tap formula (see `skills/replica-release`).

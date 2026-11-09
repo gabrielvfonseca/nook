@@ -130,7 +130,7 @@ enum BaseCmd {
     },
     /// Scan the base for absolute paths that will break inside clones
     Check,
-    /// Rebuild the base with its original repo and setup command, then swap atomically
+    /// Update the base from its remote; re-runs setup only if a lockfile changed
     Refresh,
     /// Show base age, git HEAD, lockfile hash, and whether it is stale
     Status {
@@ -609,12 +609,8 @@ fn stats(r: &Path, db: &rusqlite::Connection, json: bool) -> Result<()> {
 
 fn build_base(r: &Path, db: &rusqlite::Connection, repo: &str, setup_cmd: &str) -> Result<()> {
     let new = r.join("base.new");
-    let base = r.join("base");
-    let old = r.join("base.old");
-    for p in [&new, &old] {
-        if p.exists() {
-            std::fs::remove_dir_all(p)?;
-        }
+    if new.exists() {
+        std::fs::remove_dir_all(&new)?;
     }
     ui::status(Status::Info, &format!("cloning {repo}"));
     if !Command::new("git")
@@ -625,25 +621,48 @@ fn build_base(r: &Path, db: &rusqlite::Connection, repo: &str, setup_cmd: &str) 
     {
         bail!("git clone failed for {repo}");
     }
+    run_setup(&new, setup_cmd)?;
+    publish_base(r, db, &new, repo, setup_cmd)
+}
+
+/// Run the setup command inside a base tree. On failure the staged tree is removed.
+fn run_setup(dir: &Path, setup_cmd: &str) -> Result<()> {
     ui::status(Status::Info, &format!("running setup: {setup_cmd}"));
-    if !Command::new("sh")
+    let ok = Command::new("sh")
         .arg("-c")
         .arg(setup_cmd)
-        .current_dir(&new)
+        .current_dir(dir)
         .status()?
-        .success()
-    {
+        .success();
+    if !ok {
+        std::fs::remove_dir_all(dir)?;
         bail!("setup command failed: {setup_cmd}");
     }
+    Ok(())
+}
+
+/// Swap a staged base tree in as `base/` and record its metadata.
+fn publish_base(
+    r: &Path,
+    db: &rusqlite::Connection,
+    staged: &Path,
+    repo: &str,
+    setup_cmd: &str,
+) -> Result<()> {
+    let base = r.join("base");
+    let old = r.join("base.old");
     // Record git HEAD and lockfile hash before swapping
-    let head = lockfile::get_git_head(&new)?;
-    let lockfile_hash = lockfile::compute_lockfile_hash(&new)?;
+    let head = lockfile::get_git_head(staged)?;
+    let lockfile_hash = lockfile::compute_lockfile_hash(staged)?;
     let built_at = store::now();
 
+    if old.exists() {
+        std::fs::remove_dir_all(&old)?;
+    }
     if base.exists() {
         std::fs::rename(&base, &old)?;
     }
-    std::fs::rename(&new, &base)?;
+    std::fs::rename(staged, &base)?;
     if old.exists() {
         std::fs::remove_dir_all(&old)?;
     }
@@ -656,7 +675,7 @@ fn build_base(r: &Path, db: &rusqlite::Connection, repo: &str, setup_cmd: &str) 
         Some(setup_cmd.to_string()),
     )?;
 
-    ui::status(Status::Ok, "base built");
+    ui::status(Status::Ok, "base ready");
     if let Some(h) = &head {
         ui::detail(&format!("HEAD: {h}"));
     }
@@ -668,21 +687,70 @@ fn build_base(r: &Path, db: &rusqlite::Connection, repo: &str, setup_cmd: &str) 
     Ok(())
 }
 
+/// Bring the base up to date with its remote.
+///
+/// Fast path: clonefile the existing base (metadata only, no data copied), fetch and reset
+/// the copy to the remote's default branch, and re-run setup only if a lockfile changed.
+/// If the fast path fails for any reason, fall back to a full rebuild from the repo.
 fn refresh_base(r: &Path, db: &rusqlite::Connection) -> Result<()> {
     let base = r.join("base");
     if !base.exists() {
         return Err(CliError::no_base().into());
     }
     let info = store::get_base_info(db)?;
-    match info.and_then(|i| i.repo.zip(i.setup_cmd)) {
-        Some((repo, setup_cmd)) => build_base(r, db, &repo, &setup_cmd),
-        None => Err(CliError::new(
+    let Some((repo, setup_cmd)) = info
+        .as_ref()
+        .and_then(|i| i.repo.clone().zip(i.setup_cmd.clone()))
+    else {
+        return Err(CliError::new(
             1,
             "this base was built before repo tracking, so it cannot be refreshed",
         )
         .with_hint("rebuild it once with `replica base build --repo <url> --setup \"<cmd>\"`")
-        .into()),
+        .into());
+    };
+    let prev_lock = info.and_then(|i| i.lockfile_hash);
+
+    let new = r.join("base.new");
+    if new.exists() {
+        std::fs::remove_dir_all(&new)?;
     }
+    ui::status(Status::Info, "updating base from its remote (fast path)");
+    clone::clone_tree(&base, &new)?;
+    if let Err(e) = fetch_and_reset(&new) {
+        ui::status(
+            Status::Warn,
+            &format!("fast path failed ({e:#}); rebuilding from the repo"),
+        );
+        std::fs::remove_dir_all(&new)?;
+        return build_base(r, db, &repo, &setup_cmd);
+    }
+
+    let lock = lockfile::compute_lockfile_hash(&new)?;
+    if lock != prev_lock {
+        ui::status(Status::Info, "lockfiles changed, so setup runs again");
+        run_setup(&new, &setup_cmd)?;
+    } else {
+        ui::status(Status::Info, "lockfiles unchanged, so setup is skipped");
+    }
+    publish_base(r, db, &new, &repo, &setup_cmd)
+}
+
+/// `git fetch` and move the checkout to the remote's default branch.
+fn fetch_and_reset(dir: &Path) -> Result<()> {
+    let git = |args: &[&str]| -> Result<()> {
+        let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
+        if !out.status.success() {
+            bail!(
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    };
+    git(&["fetch", "--quiet", "--prune", "origin"])?;
+    git(&["reset", "--quiet", "--hard", "origin/HEAD"])
 }
 
 fn status_base(r: &Path, db: &rusqlite::Connection, json: bool) -> Result<()> {
