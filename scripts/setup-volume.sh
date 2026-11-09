@@ -12,4 +12,7 @@ fi
 diskutil apfs addVolume "$CONTAINER" APFS "$NAME" -quota "$QUOTA"
 mkdir -p "/Volumes/$NAME/replica"
 touch "/Volumes/$NAME/.metadata_never_index"
+# Turn off Spotlight indexing on this volume only. Needs sudo.
+sudo mdutil -i off "/Volumes/$NAME"
+echo "Spotlight indexing is off for /Volumes/$NAME (this volume only)."
 echo "Volume ready: /Volumes/$NAME  (export REPLICA_ROOT=/Volumes/$NAME/replica)"

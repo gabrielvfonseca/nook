@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help build release test lint fmt check install uninstall clean bench skills-check
+.PHONY: help build release test lint fmt check install uninstall clean bench skills-check dist
 
 help: ## Show this list
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -39,6 +39,17 @@ skills-check: ## Validate every skills/*/SKILL.md has name and description front
 		[ "$$n" = "$$dir" ] && [ "$$d" = "ok" ] || { echo "FAIL $$f (name must match directory '$$dir')"; exit 1; }; \
 		echo "ok   $$f"; \
 	done
+
+dist: ## Build universal and per-arch binaries into bin/ with sha256sums.txt
+	cargo build --release --target aarch64-apple-darwin
+	cargo build --release --target x86_64-apple-darwin
+	rm -rf bin && mkdir -p bin
+	cp target/aarch64-apple-darwin/release/replica bin/replica-darwin-arm64
+	cp target/x86_64-apple-darwin/release/replica bin/replica-darwin-x86_64
+	lipo -create bin/replica-darwin-arm64 bin/replica-darwin-x86_64 -output bin/replica-darwin-universal
+	cd bin && shasum -a 256 replica-darwin-arm64 replica-darwin-x86_64 replica-darwin-universal > sha256sums.txt
+	@lipo -info bin/replica-darwin-universal
+	@cat bin/sha256sums.txt
 
 clean: ## Remove build output
 	cargo clean
