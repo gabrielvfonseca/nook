@@ -12,6 +12,6 @@
       "REPLICA_ROOT": "/Volumes/Work/replica"
     },
     "workflow": "cd $(replica new) && zed .",
-    "more_info": "https://github.com/gabrielfonseca/replica"
+    "more_info": "https://github.com/gabrielvfonseca/replica"
   }
 }

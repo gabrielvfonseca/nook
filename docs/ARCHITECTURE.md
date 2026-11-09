@@ -1,57 +1,91 @@
 # Architecture
 
 ```
-            +-----------+
- agent ---> |  replica CLI | ---- optional ----> replica daemon (Phase 3)
-            +-----+-----+                      (scheduled gc, batched fs ops)
-                  |
-   +--------------+----------------+
-   |              |                |
- Base Manager   Workspace Mgr    Reaper (GC)
-   |              |                |
-   |          clonefile(2)      rayon parallel rm
-   |              |                |
-   +------- APFS volume (quota) ---+
-                  |
-             SQLite (WAL) metadata
+ user / agent
+      |
+      v
+ +-----------+        +-----------------+
+ | replica   |------> | help, ui, error |   output, hints, exit codes
+ | (main.rs) |        +-----------------+
+ +-----+-----+
+       |
+  +----+-----------+-----------------+----------------+
+  |                |                 |                |
+ base              workspace         gc               setup
+ (lockfile.rs,     (clone.rs,        (gc.rs,          (setup.rs,
+  base_check.rs)    store.rs)         volume.rs)       templates/)
+  |                |                 |
+  git + setup      clonefile(2)      rayon parallel rm (safe_remove)
+  |                |                 |
+  +------ APFS volume ($REPLICA_ROOT) ------+
+                   |
+           SQLite (WAL): replica.db
 ```
 
-## Layout (all on ONE APFS volume)
+There is no daemon. `replica gc` is meant to run on a timer, through launchd or
+`brew services`. A daemon with a batched file API is a Phase 4 idea in the
+[roadmap](ROADMAP.md).
+
+## Layout (all on one APFS volume)
+
 ```
 $REPLICA_ROOT/
-  base/            golden tree (repo + deps + warm build)
-  base.new/        staging during rebuild
-  ws/<id>/         one clone per run
-    .replica/tmp/     TMPDIR for that run
-  cache/           shared: cargo, pnpm/npm, sccache (NOT cloned)
-  replica.db          metadata
+  base/              golden tree: repo, dependencies, setup output
+  base.new/          staging area while a base is built or refreshed
+  base.old/          the previous base, briefly, during a swap
+  ws/<id>/           one clone per workspace
+    .replica/tmp/    TMPDIR for that workspace
+  cache/             shared caches: cargo, npm, sccache (not cloned)
+  replica.db         workspace and base metadata
 ```
 
-## Components
-1. **Base Manager** - `git clone` into `base.new`, runs setup command, atomically
-   renames to `base`. Records lockfile hash; stale if lockfile or HEAD changes.
-2. **Workspace Manager** - `clonefile(base, ws/<id>)`, inserts row, writes env file.
-3. **Reaper** - TTL expiry, then LRU eviction past high-water mark (default 80%)
-   down to low-water (default 60%). Marks row `deleting`, removes in parallel, drops row.
-4. **Store** - SQLite via `rusqlite`; schema in DATA_MODEL.md.
-5. **Stats** - `statvfs` for real free space; per-workspace logical size is advisory only.
-6. **Daemon (optional)** - runs gc on a timer; later, batched read/grep/patch API.
+## Modules
+
+| Module | Role |
+|---|---|
+| `main.rs` | Clap definitions, root checks, and one function per command |
+| `error.rs` | `CliError`: exit code plus hint. Other errors map to exit 1 |
+| `ui.rs` | Color, status lines, tables, human units, JSON strings |
+| `help.rs` | Help overview and topics. Needs no root |
+| `clone.rs` | `clonefile(2)`. Maps EXDEV, ENOSPC, and ENOTSUP to typed errors. Never copies |
+| `store.rs` | SQLite schema, migrations, and queries |
+| `gc.rs` | `safe_remove`: canonicalize, check the prefix, delete in parallel without following symlinks |
+| `volume.rs` | APFS check, same-volume check, `statvfs` usage |
+| `lockfile.rs` | Git HEAD, lockfile hashing, staleness |
+| `base_check.rs` | Scan for path-dependent files |
+| `setup.rs` | Agent detection, config and skill installation, Homebrew formula |
+| `util.rs` | TTL parsing, id generation |
 
 ## Flows
-**new:** load config -> verify base exists + same volume -> `clonefile` -> insert row
-(`active`) -> print path.
 
-**gc:** begin txn -> select expired -> mark `deleting` -> commit -> parallel remove ->
-delete rows -> check volume % -> if above high-water, repeat with LRU candidates
-(skip workspaces touched in last N minutes).
+**new:** check root and APFS → open database → confirm `base/` exists (else exit 2) →
+warn or fail on staleness → enforce `REPLICA_MAX_BYTES` (else exit 4) → `clonefile`
+→ create `.replica/tmp` → insert row (`active`) → run `--post-clone` → print the path.
 
-**base build:** clone repo into `base.new` -> run setup -> record hash -> rename
-`base` -> `base.old`, `base.new` -> `base`, delete `base.old`. Existing clones are
-unaffected (they own their blocks).
+**rm:** look up row (unknown → "already removed") → mark `deleting` → `safe_remove`
+→ delete row. A failure leaves the row in `deleting` for gc.
+
+**gc:** retry `deleting` rows → remove expired workspaces → if usage is above the
+high-water mark, remove least-recently-used workspaces not used in the last 10 minutes,
+stopping once usage is below the low-water mark. Each removal is marked `deleting`
+first.
+
+**base build:** clone repo into `base.new` → run setup there → record HEAD, lockfile
+hash, repo, and setup command → rename `base` to `base.old` → rename `base.new` to
+`base` → delete `base.old` → write metadata → run `base check`. Existing clones
+are unaffected, because each one owns its blocks.
+
+**base refresh:** read the recorded repo and setup command → run the build flow.
 
 ## Why clonefile
-Clone shares data blocks copy-on-write; only modified blocks consume new space.
-It must stay on one volume, which is why the base, workspaces, and quota volume are co-located.
 
-## Why not FUSE/FSKit
-User-space filesystem adds context-switch overhead per op and usually loses to APFS.
+A clone shares data blocks copy-on-write, and only modified blocks take new
+space. It works only within one APFS volume. That is why the base, workspaces,
+and caches all live under `$REPLICA_ROOT`. The clone still writes metadata for
+every file, so cost scales with file count. The [benchmarks](BENCHMARKS.md)
+measure that cost.
+
+## Why not FUSE or FSKit
+
+A user-space filesystem adds a context switch to every operation, and APFS
+already does this work in the kernel.

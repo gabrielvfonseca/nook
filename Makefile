@@ -1,31 +1,44 @@
-.PHONY: build release test lint fmt check install uninstall clean bench zip
+.DEFAULT_GOAL := help
+.PHONY: help build release test lint fmt check install uninstall clean bench skills-check
 
-build:
+help: ## Show this list
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+build: ## Debug build
 	cargo build
 
-release:
+release: ## Optimized build (target/release/replica)
 	cargo build --release
 
-test:
+test: ## Unit and integration tests
 	cargo test
 
-fmt:
+fmt: ## Format the code
 	cargo fmt --all
 
-lint:
+lint: ## Check formatting and run clippy with warnings as errors
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
 
-check: lint test
+check: lint test ## Everything CI runs: lint + test
 
-install: release
+install: release ## Install to $(PREFIX)/bin (default /usr/local); INSTALL_LAUNCHD=1 for auto-gc
 	./scripts/install.sh
 
-uninstall:
+uninstall: ## Remove the installed binary and launchd agent (keeps workspaces)
 	./scripts/uninstall.sh
 
-bench:
-	./scripts/bench.sh $(PROJECT)
+bench: release ## Run benchmarks (PROJECT=dir SETUP="cmd" RUNS=n; see benchmarks/README.md)
+	./benchmarks/run.sh $(if $(PROJECT),--project $(PROJECT)) $(if $(SETUP),--setup "$(SETUP)") $(if $(RUNS),--runs $(RUNS))
 
-clean:
+skills-check: ## Validate every skills/*/SKILL.md has name and description frontmatter
+	@for f in skills/*/SKILL.md; do \
+		n=$$(awk '/^name:/{print $$2; exit}' "$$f"); \
+		d=$$(awk '/^description:/{print "ok"; exit}' "$$f"); \
+		dir=$$(basename $$(dirname "$$f")); \
+		[ "$$n" = "$$dir" ] && [ "$$d" = "ok" ] || { echo "FAIL $$f (name must match directory '$$dir')"; exit 1; }; \
+		echo "ok   $$f"; \
+	done
+
+clean: ## Remove build output
 	cargo clean

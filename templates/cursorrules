@@ -6,7 +6,7 @@ Replica provides fast, isolated workspaces for AI-assisted coding using APFS clo
 ## When to Use Replica
 - Starting a new coding task requiring a clean project state
 - Running multiple Cursor sessions in parallel
-- Need workspace creation in < 100ms (vs seconds for git clone)
+- Need workspace creation in milliseconds (vs the seconds a git clone plus install takes)
 - Disk space optimization via copy-on-write cloning
 
 ## Quick Start
@@ -21,7 +21,8 @@ cd $(replica new --ttl 2h)
 ## Key Commands
 - `replica new [--ttl 2h] [--name label]` - Create workspace
 - `replica env <id>` - Get environment exports
-- `replica list` - List workspaces
+- `replica list [--json]` - List workspaces
+- `replica help [topic]` - Built-in guide
 - `replica gc` - Clean up expired workspaces
 - `replica stats` - Disk usage stats
 
@@ -43,4 +44,4 @@ export REPLICA_ROOT=/Volumes/Work/replica
 
 ## More Info
 - `replica --help`
-- https://github.com/gabrielfonseca/replica
+- https://github.com/gabrielvfonseca/replica

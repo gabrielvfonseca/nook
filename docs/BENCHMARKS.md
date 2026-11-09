@@ -1,107 +1,89 @@
 # Benchmarks
 
-Measure before building further. Record machine, macOS version, file count.
+Replica's claims are speed (creating a fully installed workspace) and disk use
+(what each workspace adds). This file records what was measured, how, and what
+is still pending. The suite lives in [`benchmarks/`](../benchmarks/README.md).
+The rule from `AGENTS.md` applies: no performance claim without a number from a
+recorded run.
 
-## How to Run
+## Status
 
-```sh
-# Requires: hyperfine (brew install hyperfine), replica in PATH, REPLICA_ROOT set
-./scripts/bench.sh /path/to/your/project [scratch-dir] [runs=5]
-```
-
-The script benchmarks:
-1. **git clone + setup** - Fresh clone from remote + dependency install
-2. **git worktree + setup** - Worktree from existing repo + dependency install
-3. **cp -c -R** - APFS clonefile copy (baseline for clonefile speed)
-4. **replica new** - Replica's clonefile-based workspace creation
-5. **replica rm** - Workspace cleanup via gc
-
-Reports median and P95 wall time over N runs (default 5), file count, and real disk space used.
-
-## Results Format
-
-| Metric | Description |
+| | |
 |---|---|
-| Method | The benchmark method |
-| Median (s) | Median wall time from hyperfine |
-| P95 (s) | 95th percentile wall time |
-| Files | File count in project |
-| Disk/clone | Extra disk space per clone (from `replica stats`) |
+| Suite | `benchmarks/run.sh`, rebuilt 2026-11-09 (hyperfine 2.0, see methodology) |
+| Latest valid run | 2026-10-25, arm64 macOS 26.6.2, **made with the previous harness** (kept below, marked superseded where it is wrong) |
+| Pending | A run of the current suite on an idle machine. The attempt on 2026-11-09 was stopped: the machine's 1-minute load average was above 100 from other long-running processes, so its timings were not usable. |
 
-## Results Template
+Run `make bench` on an idle machine, then add the new results as a section under
+[Results](#results), following the procedure in the `replica-benchmarks` skill.
 
-Fill in after running `./scripts/bench.sh`:
+## Methodology
 
-```markdown
-## Results - YYYY-MM-DD on ARCH macOS VERSION (BUILD)
+Every method creates the same thing: a fresh copy of a project with its
+dependencies installed.
 
-| Method | Median (s) | P95 (s) | Files | Disk/clone |
-|---|---|---|---|---|
-| git clone + setup | X.XX | X.XX | NNNNN | Y.Y GB |
-| git worktree + setup | X.XX | X.XX | NNNNN | Y.Y GB |
-| cp -c -R | X.XX | X.XX | NNNNN | Y.Y GB |
-| replica new | X.XX | X.XX | NNNNN | Y.Y MB |
-| replica rm | X.XX | X.XX | N/A | N/A |
-
-- Project: `/path/to/project`
-- Setup command: `npm ci` (or cargo build, pip install, etc.)
-- REPLICA_ROOT: `/Volumes/Work/replica` (or $HOME/replica with REPLICA_MAX_BYTES)
-- Runs per benchmark: 5
-```
-
-## Baselines (on your real project)
-
-```sh
-time cp -R proj /tmp/a          # copy
-time cp -c -R proj /tmp/b       # clonefile (same volume only)
-time rm -rf /tmp/a /tmp/b       # delete
-time (git clone <url> c && cd c && npm ci)   # current setup path
-```
-
-## Where is time really going?
-
-```sh
-sudo fs_usage -w -f filesys <agent-pid> | head -n 500
-sample <pid> 5
-```
-If time is dominated by process spawn or security scanning, Replica will not help much.
-
-## Replica Metrics
-
-| Metric | Method |
+| Row | What is timed |
 |---|---|
-| `replica new` latency | `hyperfine 'replica new --ttl 1m'` (cold + warm) |
-| `replica rm` latency | compare vs `rm -rf` |
-| Extra disk per clone | `replica stats` before/after |
-| Disk after 100 runs + gc | `replica stats` |
+| shell baseline | `true`, to show hyperfine's shell overhead |
+| git clone + setup | `git clone` from a local path, then `npm ci` |
+| git worktree + setup | `git worktree add --detach`, then `npm ci` |
+| cp -c -R of prebuilt base | `cp -c -R` (clonefile) of the built base |
+| replica new | `replica new --ttl 1h` |
+| replica rm | `replica rm <id>` of a workspace created in an untimed prepare step |
+| rm -rf of a cp -c clone | `rm -rf` of a clonefile copy, to compare with `replica rm` |
 
-## Decision Rule
+- **Untimed prepare and cleanup.** Each run's setup and teardown happen outside the timer.
+- **Warm npm cache**, shared by all methods. The base build is timed separately (one time).
+- **One APFS volume** for source, base, and workspaces.
+- **Run counts.** 20 runs for cheap operations, 10 for installs, with warmup runs first. P95 is nearest-rank over the runs.
+- **Disk per clone.** For clonefile methods, the change in volume usage over 20 clones (`df`). For git, `du` of one clone, because git copies data and nothing is shared.
 
-Adopt if clone+delete beats current setup+cleanup by >= 5-10x. Otherwise investigate
-Spotlight/XProtect first.
+### Fixture
+
+[`benchmarks/fixtures/npm-app`](../benchmarks/fixtures/npm-app): 11 direct
+dependencies, 39 locked packages, about 1,700 installed files and 11 MB on disk.
+Its lockfile is committed.
+
+### Validation of the disk method
+
+A control run on 2026-11-09 (same machine, same fixture):
+
+| Method | `df` delta per clone | Expected |
+|---|---|---|
+| real copy (`cp -R`) | 12.9 MB | 11.7 MB, which is `du` of one copy |
+| `cp -c -R` (clonefile) | 1.4 MB | metadata only, data blocks shared |
+| `replica new` (clonefile) | 1.4 MB | same as `cp -c`, because it uses the same syscall |
+
+So a clone is not free. It adds APFS metadata for each file and directory, about
+1.4 MB for this fixture. Its data blocks are shared with the base until a file
+changes.
+
+## Corrections to the previous run
+
+The 2026-10-25 run used an earlier harness. Four things need correcting:
+
+1. **`replica rm` row.** It did not time one removal. The command ran `replica gc --dry-run`, then `replica list`, then up to five `replica rm`s on whatever happened to be left from the `replica new` row. Its 22 ms median is not a per-workspace removal time, so do not cite it.
+2. **"About 0 MB" per clone.** This claim was not supported by the old run. Its disk column was not a measured `df` delta, and the 2026-11-09 control measured about 1.4 MB of APFS metadata per clone for this fixture.
+3. **`replica new` timing.** The 66 ms median is the same command the current suite times. It stands as recorded.
+4. **P95.** The old script used a floor-based index, not nearest-rank. With 20 or more runs, the difference is small but real, so do not compare old and new P95 values directly. The two can differ by one run.
 
 ## Results
 
-### 2026-10-25 on arm64 macOS 26.6.2 (25G83)
+### 2026-10-25 on arm64 macOS 26.6.2 (25G83), previous harness, superseded in part
 
-| Method | Median (s) | P95 (s) | Files | Disk/clone |
+Fixture: a 1,842-file npm project with 70 dependencies, on a 1 TB APFS volume.
+Runs: 3 per method. Corrections above apply to the `replica rm` row and the disk column.
+
+| Method | Median (s) | P95 (s) | Files | Disk/clone (as recorded) |
 |---|---|---|---|---|
-| git clone + setup | 3.10 | 3.19 | 1842 | ~33 MB |
-| git worktree + setup | 2.51 | 2.61 | 1842 | ~33 MB |
-| cp -c -R | 1.33 | 1.37 | 1842 | ~33 MB |
-| replica new | 0.066 | 0.075 | 1842 | ~0 MB (CoW) |
-| replica rm | 0.022 | 0.721 | N/A | N/A |
+| git clone + setup | 3.10 | 3.19 | 1842 | ~33 MB (du, superseded) |
+| git worktree + setup | 2.51 | 2.61 | 1842 | ~33 MB (du, superseded) |
+| cp -c -R | 1.33 | 1.37 | 1842 | ~33 MB (du, superseded) |
+| replica new | 0.066 | 0.075 | 1842 | ~0 MB (superseded: about 1.4 MB, see above) |
+| replica rm | 0.022 | 0.721 | N/A | N/A (superseded: not a single removal, see above) |
 
-- Project: `/tmp/replica-bench-project` (npm project, 70 deps)
-- Setup command: `npm ci`
-- REPLICA_ROOT: `/tmp/replica-bench` (APFS, 1TB volume)
-- Runs per benchmark: 3
+- `replica new` at 66 ms was 47x faster than `git clone` plus `npm ci` (3.10 s), and 20x faster than `cp -c` (1.33 s).
+- The `cp -c` result was 2.3x faster than the git clone, so most of the git clone's time is the install, not the copy.
+- The base build (one time) is not part of these numbers.
 
-### Key Findings
-
-- **replica new (66ms median)** is **47x faster** than `git clone + npm ci` (3.10s)
-- **replica new (66ms median)** is **20x faster** than raw `cp -c` clonefile (1.33s)
-- Clonefile copy (`cp -c`) is only 2.3x faster than git clone because npm ci dominates
-- Replica's advantage: dependencies pre-installed in base, only metadata records created
-- Disk per clone: ~0 MB additional (APFS copy-on-write shares all blocks)
-- replica rm median 22ms, but first run can be slower (721ms P95) due to cache effects
+Add new runs above this section, newest first.

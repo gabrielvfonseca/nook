@@ -145,3 +145,75 @@ fn test_agent_config_serialization() {
     assert_eq!(deserialized.config_files.len(), 1);
     assert!(deserialized.skill_registration.enabled);
 }
+
+fn agent_for(
+    target: &std::path::Path,
+    template: &str,
+    append: bool,
+) -> replica::setup::DetectedAgent {
+    replica::setup::DetectedAgent {
+        config: replica::setup::AgentConfig {
+            name: "test".to_string(),
+            detect_paths: vec![],
+            config_files: vec![replica::setup::ConfigFile {
+                target: target.display().to_string(),
+                template: template.to_string(),
+                append,
+            }],
+            skill_registration: replica::setup::SkillRegistration {
+                enabled: false,
+                skill_dir: String::new(),
+                install_script: String::new(),
+            },
+            custom_args: std::collections::HashMap::new(),
+        },
+        detected_paths: vec![],
+    }
+}
+
+#[test]
+fn appended_config_is_added_once() {
+    let temp = tempdir().unwrap();
+    let target = temp.path().join("CLAUDE.md");
+    fs::write(&target, "# My notes\n").unwrap();
+    let agent = agent_for(&target, "claude.md", true);
+
+    replica::setup::generate_agent_config(&agent, temp.path(), false, false).unwrap();
+    replica::setup::generate_agent_config(&agent, temp.path(), false, false).unwrap();
+
+    let text = fs::read_to_string(&target).unwrap();
+    assert!(text.starts_with("# My notes"), "user content must be kept");
+    assert_eq!(
+        text.matches("# Replica Integration for Claude Code")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn replaced_config_is_kept_without_force_and_backed_up_with_force() {
+    let temp = tempdir().unwrap();
+    let target = temp.path().join(".cursorrules");
+    fs::write(&target, "my rules").unwrap();
+    let agent = agent_for(&target, "cursorrules", false);
+
+    replica::setup::generate_agent_config(&agent, temp.path(), false, false).unwrap();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "my rules");
+    assert!(!temp.path().join(".cursorrules.bak").exists());
+
+    replica::setup::generate_agent_config(&agent, temp.path(), true, false).unwrap();
+    assert_ne!(fs::read_to_string(&target).unwrap(), "my rules");
+    assert_eq!(
+        fs::read_to_string(temp.path().join(".cursorrules.bak")).unwrap(),
+        "my rules"
+    );
+}
+
+#[test]
+fn dry_run_writes_nothing() {
+    let temp = tempdir().unwrap();
+    let target = temp.path().join("fresh.md");
+    let agent = agent_for(&target, "claude.md", true);
+    replica::setup::generate_agent_config(&agent, temp.path(), false, true).unwrap();
+    assert!(!target.exists());
+}
