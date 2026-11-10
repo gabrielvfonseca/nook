@@ -29,7 +29,7 @@ Clones the base into a new workspace with `clonefile(2)`. It prints the path on 
 | `--name` | none | Label shown by `replica list`. |
 | `--post-clone` | none | Shell command run inside the new workspace after cloning. A failure keeps the workspace and exits 1. |
 | `--require-fresh` | off | Exit 2 instead of warning when the base is stale. |
-| `--ref` | none | Branch to create the workspace from. If the branch's lockfile hash matches the base, clone as normal and report "cloned directly". If it differs, clone then run the setup command (an incremental install) and report "lockfile drift on <branch>; running incremental install". |
+| `--ref` | none | Branch to create the workspace from. If the branch's lockfile hash matches the base, clone as normal and report "cloned directly". If it differs, clone the base, check out the branch, then run the setup command (an incremental install) and report `lockfile drift on branch my-feature-branch; running incremental install` (with the actual branch name). |
 
 Fails with exit 2 if no base exists, with exit 4 if `REPLICA_MAX_BYTES` is reached, and with exit 3 if the base and `ws/` are on different volumes.
 
