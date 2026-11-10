@@ -31,6 +31,7 @@ workspaces, versus seconds for `git clone` plus an install.
 - **Bounded disk.** TTL expiry, least-recently-used eviction, a byte cap, and an optional dedicated APFS volume with a quota.
 - **Cheap updates.** `replica base refresh` brings the base up to date with its remote without a full rebuild. [Details below](#keeping-the-base-fresh).
 - **Agent-ready.** A stable CLI with `--json` output, documented exit codes, and skills for Claude Code, Cursor, and the skills.sh CLI.
+- **Concurrency tested.** `tests/concurrency.rs` runs 10 simultaneous `replica new`/use/`rm` cycles with zero SQLite busy errors, no corruption, and all workspaces created and removed. `replica gc` skips workspaces with a fresh lease (`.replica/lease`), so a launchd gc every 10 minutes never deletes a workspace an agent is using.
 
 ## Requirements
 
@@ -84,7 +85,7 @@ replica rm <id>                                      # remove one (idempotent)
 ```
 
 **Branches with different lockfiles.** If you create a workspace from a branch
-whose lockfile differs from the base, use `--ref <branch>`:
+whose lockfile differs from the base, use `--ref`:
 
 ```sh
 replica new --ref my-feature-branch
@@ -92,9 +93,10 @@ replica new --ref my-feature-branch
 
 Replica compares the branch's lockfile hash with the base's recorded hash. If
 they match, the workspace is cloned directly ("cloned directly"). If they differ,
-Replica clones the base and then runs the setup command (an incremental install)
-so the workspace gets correct dependencies, and reports "lockfile drift on
-<branch>; running incremental install". The CLI always tells you which path it took.
+Replica clones the base, checks out `my-feature-branch`, then runs the setup
+command (an incremental install) so the workspace gets correct dependencies, and
+reports `lockfile drift on branch my-feature-branch; running incremental install`.
+The CLI always tells you which path it took.
 
 **4. Give your agents the skill.**
 
@@ -135,7 +137,7 @@ When the remote moves on, `replica base refresh` updates the base. It does not r
 
 So an upstream commit that does not touch dependencies costs a fetch and a checkout. A lockfile change costs about as much as the setup command itself. If the fast path fails for any reason, refresh falls back to a full rebuild.
 
-Check freshness with `replica base status`, and use `replica new --require-fresh` to refuse a stale base. The timing of the fast path is measured in the [benchmark suite](benchmarks/README.md); the results will appear in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Check freshness with `replica base status`, and use `replica new --require-fresh` to refuse a stale base. The timing of the fast path is measured in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Disk usage: what a workspace really costs
 
@@ -149,14 +151,11 @@ Spotlight can also add writes on a busy volume. `scripts/setup-volume.sh` turns 
 
 ## Limitations
 
-- **Path-dependent build output.** Some tools write absolute paths into their output: Python venvs, `node_modules/.bin` scripts, Cargo fingerprints, TypeScript `.tsbuildinfo`. These break in a clone. Run `replica base check` to find them, then fix them with `--post-clone` or by regenerating them. See the [replica-base skill](skills/replica-base/SKILL.md).
-- **Cargo `target/` clones safely but adds cost.** A cloned `target/` gives a correct incremental no-op build (~20 ms, no recompile) when nothing changed, and recompiles only changed crates after a source touch — it does not force a full rebuild. However, it adds APFS metadata per clone for no benefit, so exclude `target/` from the base (`.gitignore`) and use a shared `CARGO_TARGET_DIR` under `$REPLICA_ROOT/cache` instead.
+- **Path-dependent build output.** Some tools write absolute paths into their output: Python venvs, `node_modules/.bin` scripts, TypeScript `.tsbuildinfo`. These break in a clone. Run `replica base check` to find them, then fix them with `--post-clone` or by regenerating them. See the [replica-base skill](skills/replica-base/SKILL.md).
+- **Cargo `target/` clones safely but adds cost.** A cloned `target/` gives a correct incremental no-op build (~20 ms, no recompile) when nothing changed, and recompiles only changed crates after a source touch — it does not force a full rebuild. However, `target/` is created by the setup command, so `.gitignore` does not keep it out of the base; you must exclude it another way (or not build during setup). A shared `CARGO_TARGET_DIR` under `$REPLICA_ROOT/cache` keeps incremental builds fast but reintroduces Cargo's file-lock waiting, so parallel agents can block on `Blocking waiting for file lock`. For parallel use, consider `sccache` instead of a shared target dir.
 - **Cost scales with file count.** Each clone writes metadata for every file. Replica is much faster than copying or cloning file by file, but it is not free, and very large trees (hundreds of thousands of files) have not been measured.
 - **Same volume only.** Source, base, and workspaces must share one APFS volume.
 - **Not a speedup inside a running agent.** Replica makes workspace creation fast. It does not speed up reads or writes during a run, does not reduce the RAM or CPU used by running many agents at once, and does not fix Spotlight or XProtect scanning.
-- **Lockfile drift is handled by `--ref`.** If a branch's lockfile differs from the base, `replica new --ref <branch>` clones the base and runs the setup command (incremental install) so the workspace gets correct dependencies, and reports "lockfile drift on <branch>; running incremental install". If the lockfile matches, it clones directly.
-- **Concurrency is tested.** `tests/concurrency.rs` runs 10 simultaneous `replica new`/use/`rm` cycles with zero SQLite busy errors, no corruption, and all workspaces created and removed. `replica gc` skips workspaces with a fresh lease (`.replica/lease`), so a launchd gc every 10 minutes never deletes a workspace an agent is using.
-- **`replica rm` P95.** Early measurements showed a 22 ms median vs 721 ms P95 gap, but that row was not a single removal (it combined `gc --dry-run`, `list`, and up to five `rm`s). Current data measures `replica rm` as a single removal with no tail latency.
 - **macOS only.** Linux and Windows are out of scope.
 
 ## Benchmarks
