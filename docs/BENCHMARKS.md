@@ -167,11 +167,12 @@ Runs: 3 per method. Corrections above apply to the `replica rm` row and the disk
 ## Pending: medium and large project sizes
 
 The current published results use the small fixture (~1.7k files). Synthetic
-medium (~30k files) and large (~100k+ files) npm projects have been prepared at
+medium (~30k files) and large (~100k+ files) npm projects have been prepared at 
 `/tmp/replica-bench-projects/medium-project` and
 `/tmp/replica-bench-projects/large-project` respectively, but clean benchmark
 runs could not be completed on the shared machine due to high CPU load from
-other processes. To run them once the machine is idle:
+other processes. `replica base refresh` timing has not been measured either.
+To run them once the machine is idle:
 
 ```sh
 make release
